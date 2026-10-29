@@ -53,7 +53,22 @@ def main():
         cid = sessions[-1]
         receipts = wait_receipt(context, page, args.url, cid, {'rtc_playing','mjpeg_decoded'})
         print('Default receipt:', [{k:v for k,v in e.items() if k in ('event','frames_decoded','local_candidate','remote_candidate','protocol','access')} for e in receipts])
+        assert page.locator('#video-log-filter').input_value() == 'all'
+        rtc_received = any(e['event'] == 'rtc_playing' for e in receipts)
+        if rtc_received:
+            receipt_row = page.locator(f'.connection-row[data-connection-id="{cid}"][data-event="rtc_playing"]')
+            receipt_row.wait_for(state='attached', timeout=12000)
+            page.select_option('#video-log-filter', 'webrtc')
+            assert receipt_row.count() == 1
+            assert '복호화' in receipt_row.inner_text()
+            page.select_option('#video-log-filter', 'mjpeg')
+            assert receipt_row.count() == 0
+            page.select_option('#video-log-filter', 'all')
+            print('Actual RTC receipt visible in default and WebRTC history: OK')
         page.select_option('#stream-mode', 'overlay')
+        if rtc_received:
+            ended = wait_receipt(context, page, args.url, cid, {'ended'})
+            assert any(e['transport'] == 'webrtc' for e in ended)
         page.wait_for_function("document.querySelector('.stream').naturalWidth > 100 && document.querySelector('.stream').src.includes('overlay=true')")
         assert page.locator('video').count() == 0
         page.screenshot(path="runtime/checks/industrial-monitor.png", full_page=True)
@@ -84,6 +99,10 @@ def main():
         assert any(e['event'] == 'fallback' and e['reason'] == 'whep_failed' for e in session)
         assert not any(e['event'] == 'rtc_playing' for e in session)
         print("Persistent fallback history / actual MJPEG receipt: OK")
+        page.select_option('#video-log-filter', 'webrtc')
+        page.locator(f'.connection-row[data-connection-id="{cid}"][data-event="fallback"]').wait_for(state='attached', timeout=12000)
+        assert page.locator('.connection-row[data-event="mjpeg_decoded"]').count() == 0
+        page.select_option('#video-log-filter', 'all')
         print("WebRTC failure -> clean MJPEG: OK")
         # Browser-local fixtures only. No mutation API or native alarm is invoked.
         simulated = context.request.get(args.url + '/api/status').json()

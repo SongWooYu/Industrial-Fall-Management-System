@@ -73,6 +73,29 @@ class HistoryTest(unittest.TestCase):
             self.assertTrue(history.snapshot()["storage_error"])
             self.assertEqual(len(history.items), 1)
 
+    def test_webrtc_lifecycle_survives_restart(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'connections.jsonl'
+            history = ConnectionHistory(path)
+            history.record(observation(event='attempt', transport='connecting', reason='automatic'))
+            history.server('whep_accepted', 'a' * 32, 'domain_url', transport='webrtc', http_status=201)
+            self.assertNotIn('rtc_playing', [r['event'] for r in history.items])
+            history.record(observation(event='rtc_playing', transport='webrtc', reason='automatic',
+                                       frames_decoded=21, width=1280, height=720, ice_state='connected',
+                                       local_candidate='host', remote_candidate='relay', protocol='udp'))
+            history.record(observation(event='ended', transport='webrtc', reason='pagehide'))
+            history.close()
+            restored = ConnectionHistory(path)
+            try:
+                rows = restored.snapshot()['events']
+                self.assertEqual([r['event'] for r in rows], ['ended', 'rtc_playing', 'whep_accepted', 'attempt'])
+                self.assertEqual(rows[1]['frames_decoded'], 21)
+                self.assertEqual(rows[1]['remote_candidate'], 'relay')
+                self.assertEqual(rows[1]['source'], 'browser')
+                self.assertEqual(rows[2]['source'], 'server')
+            finally:
+                restored.close()
+
 
 class HistoryAPITest(unittest.TestCase):
     def setUp(self):
@@ -99,6 +122,17 @@ class HistoryAPITest(unittest.TestCase):
         self.assertEqual(result.headers["Cache-Control"], "no-store")
         self.assertEqual(result.json["events"][0]["access"], "domain_url")
         self.assertEqual(self.client.head("/api/video-connections").status_code, 200)
+
+    def test_browser_api_records_webrtc_receipt_and_end(self):
+        for event, fields in [('rtc_playing', {'frames_decoded': 14, 'ice_state': 'connected'}),
+                              ('ended', {'reason': 'hidden'})]:
+            response = self.client.post('/api/video-connections', json=observation(
+                event=event, transport='webrtc', **fields))
+            self.assertEqual(response.status_code, 202)
+        rows = self.client.get('/api/video-connections').json['events']
+        self.assertEqual([r['event'] for r in rows], ['ended', 'rtc_playing'])
+        self.assertEqual(rows[1]['frames_decoded'], 14)
+        self.assertTrue(all(r['transport'] == 'webrtc' for r in rows))
 
     def test_whep_success_is_not_video_success_and_error_keeps_code(self):
         with patch("industrial_fall.webrtc.build_opener") as build:

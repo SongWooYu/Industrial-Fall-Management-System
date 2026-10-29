@@ -7,7 +7,7 @@
   <script defer src="{{ url_for('static', filename='stream-player.js') }}"></script>
   <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261029-voices2-cleanup') }}"></script>
   <script defer src="{{ url_for('static', filename='dashboard.js', v='20261029-alerts2') }}"></script>
-  <script defer src="{{ url_for('static', filename='connection-history.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='connection-history.js', v='20261029-all-transports') }}"></script>
 </head>
 <body>
   <header><div><div class="eyebrow">INDUSTRIAL SAFETY · VISION</div><h1>산업안전 낙상관리시스템</h1></div>
@@ -39,9 +39,9 @@
     </div>
     <details class="panel connection-panel" id="connection-history" open>
       <summary>영상 연결 이력 <span id="video-log-summary" class="muted">기록 확인 중</span></summary>
-      <div class="connection-tools"><label><input id="video-log-filter" type="checkbox" checked> MJPEG·실패 기록만</label><span id="video-log-health" class="muted"></span></div>
+      <div class="connection-tools"><label for="video-log-filter">표시할 연결 <select id="video-log-filter"><option value="all">전체 · WebRTC + MJPEG</option><option value="webrtc">WebRTC</option><option value="mjpeg">MJPEG</option><option value="failed">실패·대체</option></select></label><span id="video-log-health" class="muted"></span></div>
       <div id="video-log-events" class="connection-events"><p class="empty">아직 연결 기록이 없습니다.</p></div>
-      <p class="storage-note">최근 200건 · 최대 약 6MB 순환 저장 · 재시작 후 복원. 영상 녹화가 아닌 연결 정보입니다.<br>‘도메인 URL’ 접속도 같은 LAN일 수 있습니다. WHEP 응답 성공만으로 외부 WebRTC 성공이라고 판단하지 않습니다.</p>
+      <p class="storage-note">WebRTC·MJPEG 모두 기록 · 최근 200건 · 최대 약 6MB 순환 저장 · 재시작 후 복원. 필터는 표시만 바꾸며, 영상 녹화가 아닌 연결 정보입니다.<br>‘도메인 URL’ 접속도 같은 LAN일 수 있습니다. WHEP 응답 성공과 실제 WebRTC 영상 수신은 구분합니다.</p>
     </details>
     <footer><span>Hailo YOLOv8s-Pose + EdgeFall · 단독 실행</span><span>개발·시연용 POC — 인증된 산업 안전 장치가 아닙니다.</span></footer>
   </main>
