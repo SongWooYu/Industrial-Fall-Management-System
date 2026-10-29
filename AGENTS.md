@@ -3,6 +3,8 @@
 Read `docs/ARCHITECTURE.md` and `docs/MIGRATION_2026-10-29.md` before runtime changes.
 This repository is standalone Pi5 fall detection, not a smart-home controller.
 Do not add Pi4, MQTT, face recognition, TTS, GRU or vehicle control without a new request.
+Browser-only speech alerts were explicitly requested on 2026-10-29. Keep sound tests
+client-only, historical events silent and server/Pi4 audio routes absent.
 Never modify the collaborator's Pi4 workspace or old shared repository as part of this app.
 
 Preserve Hailo YOLOv8s-Pose v2.15 HEF checksum, EdgeFallKit pinned commit and

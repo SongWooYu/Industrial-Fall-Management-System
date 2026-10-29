@@ -3,9 +3,10 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>산업안전 낙상관리시스템</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261029-alerts1') }}">
   <script defer src="{{ url_for('static', filename='stream-player.js') }}"></script>
-  <script defer src="{{ url_for('static', filename='dashboard.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='browser-alerts.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261029-alerts1') }}"></script>
   <script defer src="{{ url_for('static', filename='connection-history.js') }}"></script>
 </head>
 <body>
@@ -13,16 +14,26 @@
     <div class="tools"><span class="node">Pi5 · Hailo-8</span><label class="sr-only" for="theme">화면 테마</label><select id="theme"><option value="system">시스템 테마</option><option value="light">밝게</option><option value="dark">어둡게</option></select></div>
   </header>
   <main>
-    <section id="alarm" class="alarm" aria-live="polite" aria-atomic="true" data-state="unobserved">
-      <div><span class="eyebrow">낙상 감지 상태</span><h2 id="alarm-title">장비에 연결 중</h2><p id="alarm-detail">카메라와 분석 상태를 확인하고 있습니다.</p></div>
+    <section id="alarm" class="alarm" data-state="unobserved">
+      <div aria-live="polite" aria-atomic="true"><span class="eyebrow">낙상 감지 상태</span><h2 id="alarm-title">장비에 연결 중</h2><p id="alarm-detail">카메라와 분석 상태를 확인하고 있습니다.</p></div>
       <div class="update"><span id="connection">대기</span><small id="updated">—</small></div>
+    </section>
+    <section class="alert-controls panel" aria-label="브라우저 음성 알림">
+      <div><strong>브라우저 음성 알림</strong><p id="audio-status" role="status">꺼짐 · 이 기기의 스피커에서 재생합니다.</p></div>
+      <div class="tools"><button id="audio-enable" type="button" aria-pressed="false">음성 알림 켜기</button><button id="audio-test" type="button">소리만 테스트</button><label class="volume" for="audio-volume">음량 <input id="audio-volume" type="range" min="0" max="100" step="5" value="80"><output id="audio-volume-value" for="audio-volume">80%</output></label></div>
+      <p class="audio-note">새 낙상 확정 시 음성 안내 · 테스트는 감지 기록을 만들지 않습니다. 새로고침 후에는 다시 켜 주세요. 탭 종료·절전·백그라운드에서는 알림이 보장되지 않습니다.</p>
+    </section>
+    <section id="fall-notice" class="fall-notice" aria-label="확인하지 않은 낙상 기록" hidden>
+      <div><strong>확인이 필요한 낙상 감지 기록</strong><p id="fall-notice-detail"></p><small>현재 상태와 별개로 남는 기록입니다. 추적 종료·회복 동작만으로 사고 해결을 뜻하지 않습니다.</small></div>
+      <button id="acknowledge-fall" type="button">기록 확인</button>
     </section>
     <div class="layout">
       <section class="panel monitor">
         <div class="panel-head"><div><h2>현장 모니터</h2><span class="muted">Dahua · 낙상 감시 구역</span></div><div class="tools"><label class="sr-only" for="stream-mode">영상 모드</label><select id="stream-mode"><option value="auto">원본 영상 · WebRTC 우선</option><option value="overlay">분석 영상 · 박스·관절</option></select><button id="reconnect" type="button">재연결</button></div></div>
-        <div class="video-wrap"><img class="stream" data-camera="dahua" alt="산업 현장 실시간 낙상 감시 영상"><span class="transport-label">영상 연결 중</span></div>
+        <div class="video-wrap"><img class="stream" data-camera="dahua" alt="산업 현장 실시간 낙상 감시 영상"><span class="transport-label">영상 연결 중</span><div id="video-alarm" class="video-alarm" data-state="unobserved"><span>현재 AI 판정</span><strong id="video-alarm-title">상태 확인 중</strong><small id="video-alarm-detail">분석 연결 대기</small></div></div>
+        <div class="state-legend" aria-label="낙상 판정 단계"><span data-stage="normal">관측 중</span><span data-stage="suspected">낙상 의심</span><span data-stage="fallen">낙상 감지</span><span data-stage="recovering">회복 동작</span></div>
         <div class="metrics"><div><span>추적 중인 사람</span><strong id="people">—</strong></div><div><span>AI 분석 FPS</span><strong id="fps">—</strong></div><div><span>Hailo 추론</span><strong id="inference">—</strong></div><div><span>Pi5 입력 프레임 age</span><strong id="age">—</strong></div></div>
-        <div class="analysis"><div class="analysis-head"><strong id="readiness">분석 상태 확인 중</strong><span id="score">모델 점수 —</span></div><p id="analysis-detail">사람이 보이면 약 3.1초의 움직임을 관측합니다.</p><p class="muted" id="decision">모델 점수만으로 낙상을 확정하지 않습니다.</p></div>
+        <div class="analysis"><div class="analysis-head"><strong id="readiness">분석 상태 확인 중</strong><span id="score">모델 점수 —</span></div><p id="analysis-detail">사람이 보이면 약 3.1초의 움직임을 관측합니다.</p><p class="muted" id="decision">모델 점수만으로 낙상을 확정하지 않습니다.</p><p id="last-transition" class="muted">최근 상태 변화 기록 없음</p></div>
       </section>
       <aside class="panel events-panel"><div class="panel-head"><div><h2>감지 기록</h2><span class="muted">최근 50개 · Pi5 로컬 보관</span></div><span class="count" id="event-count">0</span></div><div id="events" class="events"><p class="empty">아직 감지 기록이 없습니다.</p></div><p class="storage-note">캡처는 최대 50장·1시간 보관됩니다. 재시작 시 기록은 초기화됩니다.</p></aside>
     </div>
