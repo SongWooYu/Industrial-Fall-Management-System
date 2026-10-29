@@ -14,6 +14,10 @@ queues only, no duplicate-frame time windows. Camera reconnect resets observatio
 Runtime code: `src/industrial_fall`. No speculative compatibility layers.
 Never commit `.env`, runtime artifacts, event images, face data or raw datasets.
 Recent events 50, evidence 50 x 512 KB / 1 hour, diagnostics 20 MB x 3, dedup 256.
+Video connection observations: recent 200, JSONL 2 MB x 3, queue 256; no raw SDP/IP/URLs.
+Do not call a WHEP 201 or a domain URL proof of external WebRTC reception.
+Local Hailo 4.23 driver backport is documented in docs/HAILO_KERNEL_LOG_FIX_2026-10-29.md;
+do not automatically reinstall, upgrade or repatch the kernel driver in app setup.
 Evidence image and keypoints MUST come from the same inference frame.
 Never claim model score equals accident probability or POC equals certified safety.
 

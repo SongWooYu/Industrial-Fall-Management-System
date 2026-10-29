@@ -1,8 +1,21 @@
 """Optional Playwright + system Chromium smoke test; never emits real events."""
 import argparse
 import base64
+import time
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+
+
+def wait_receipt(context, page, url, cid, events):
+    # Assert persisted server evidence, not truthiness of a JS Promise in polling.
+    deadline = time.monotonic() + 25
+    while time.monotonic() < deadline:
+        history = context.request.get(url + '/api/video-connections', timeout=4000).json()['events']
+        receipts = [e for e in history if e['connection_id'] == cid and e['event'] in events]
+        if receipts:
+            return receipts
+        page.wait_for_timeout(500)
+    raise AssertionError(f'No persisted video receipt for {cid}')
 
 
 def main():
@@ -16,11 +29,21 @@ def main():
         context = browser.new_context(viewport={"width": 1440, "height": 1050})
         page = context.new_page()
         errors = []
+        sessions = []
+        def remember_session(request):
+            if request.method == 'POST' and '/api/video-connections' in request.url:
+                data = request.post_data_json
+                if data.get('event') == 'attempt':
+                    sessions.append(data['connection_id'])
+        page.on('request', remember_session)
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(args.url, wait_until="domcontentloaded")
         page.wait_for_function("document.getElementById('connection').textContent.includes('AI 분석 중')", timeout=25000)
         page.wait_for_function("(document.querySelector('video')?.readyState >= 2) || document.querySelector('.stream').naturalWidth > 100", timeout=25000)
         print("Default transport:", page.locator('.transport-label').inner_text())
+        cid = sessions[-1]
+        receipts = wait_receipt(context, page, args.url, cid, {'rtc_playing','mjpeg_decoded'})
+        print('Default receipt:', [{k:v for k,v in e.items() if k in ('event','frames_decoded','local_candidate','remote_candidate','protocol','access')} for e in receipts])
         page.select_option('#stream-mode', 'overlay')
         page.wait_for_function("document.querySelector('.stream').naturalWidth > 100 && document.querySelector('.stream').src.includes('overlay=true')")
         assert page.locator('video').count() == 0
@@ -37,13 +60,21 @@ def main():
         context.close()
 
         context = browser.new_context(viewport={"width": 1440, "height": 1000})
-        context.route('**/api/webrtc/dahua/whep', lambda route: route.fulfill(status=503, body='unavailable'))
+        context.route('**/api/webrtc/dahua/whep*', lambda route: route.fulfill(status=503, body='unavailable'))
         page = context.new_page()
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(args.url, wait_until="domcontentloaded")
         page.wait_for_function("document.querySelector('.stream').naturalWidth > 100", timeout=25000)
         assert 'MJPEG' in page.locator('.transport-label').inner_text()
         assert 'overlay=false' in page.locator('.stream').get_attribute('src')
+        from urllib.parse import urlparse, parse_qs
+        cid = parse_qs(urlparse(page.locator('.stream').get_attribute('src')).query)['cid'][0]
+        wait_receipt(context, page, args.url, cid, {'mjpeg_decoded'})
+        history = context.request.get(args.url + '/api/video-connections').json()['events']
+        session = [e for e in history if e['connection_id'] == cid]
+        assert any(e['event'] == 'fallback' and e['reason'] == 'whep_failed' for e in session)
+        assert not any(e['event'] == 'rtc_playing' for e in session)
+        print("Persistent fallback history / actual MJPEG receipt: OK")
         print("WebRTC failure -> clean MJPEG: OK")
         # Browser-local fixtures only. No mutation API or native alarm is invoked.
         simulated = context.request.get(args.url + '/api/status').json()

@@ -6,6 +6,7 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
   <script defer src="{{ url_for('static', filename='stream-player.js') }}"></script>
   <script defer src="{{ url_for('static', filename='dashboard.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='connection-history.js') }}"></script>
 </head>
 <body>
   <header><div><div class="eyebrow">INDUSTRIAL SAFETY · VISION</div><h1>산업안전 낙상관리시스템</h1></div>
@@ -25,6 +26,12 @@
       </section>
       <aside class="panel events-panel"><div class="panel-head"><div><h2>감지 기록</h2><span class="muted">최근 50개 · Pi5 로컬 보관</span></div><span class="count" id="event-count">0</span></div><div id="events" class="events"><p class="empty">아직 감지 기록이 없습니다.</p></div><p class="storage-note">캡처는 최대 50장·1시간 보관됩니다. 재시작 시 기록은 초기화됩니다.</p></aside>
     </div>
+    <details class="panel connection-panel" id="connection-history" open>
+      <summary>영상 연결 이력 <span id="video-log-summary" class="muted">기록 확인 중</span></summary>
+      <div class="connection-tools"><label><input id="video-log-filter" type="checkbox" checked> MJPEG·실패 기록만</label><span id="video-log-health" class="muted"></span></div>
+      <div id="video-log-events" class="connection-events"><p class="empty">아직 연결 기록이 없습니다.</p></div>
+      <p class="storage-note">최근 200건 · 최대 약 6MB 순환 저장 · 재시작 후 복원. 영상 녹화가 아닌 연결 정보입니다.<br>‘도메인 URL’ 접속도 같은 LAN일 수 있습니다. WHEP 응답 성공만으로 외부 WebRTC 성공이라고 판단하지 않습니다.</p>
+    </details>
     <footer><span>Hailo YOLOv8s-Pose + EdgeFall · 단독 실행</span><span>개발·시연용 POC — 인증된 산업 안전 장치가 아닙니다.</span></footer>
   </main>
   <dialog id="evidence"><div class="panel-head"><h2 id="evidence-title">낙상 순간 캡처</h2><button id="close-evidence" type="button" aria-label="캡처 닫기">닫기 ×</button></div><img id="evidence-image" alt="낙상 감지 순간의 박스와 관절 캡처"><p id="evidence-detail"></p></dialog>

@@ -2,7 +2,7 @@
 
 ## 코드 검증 (2026-10-29)
 
-34개 자동 테스트 통과:
+초기 분리 시 34개, 연결 이력 추가 후 **43개** 자동 테스트 통과:
 
 - 기존 Hailo 좌표 변환/EdgeFall native 단위 계약·기하+시간 gate 테스트.
 - 느리게 눕기·빠른 숙이기 등 synthetic pose fixture 회귀 테스트.
@@ -10,6 +10,7 @@
 - 동일 프레임 박스·관절, 연속 동일 프레임 재추론 금지, 재연결 시 관측 초기화.
 - MQTT/얼굴/Pi4 제어 route 부재, WHEP same-origin/고정 대상, 구독 제한/해제.
 - 최근 입력과 추론 상태를 반영하는 health(200/503), 순환 로그.
+- 영상 연결 이력 입력 제한·순환/복원·저장 실패 격리·출처 검증·협상/실수신 구분 9개 추가.
 
 `scripts/check_runtime.py` 사전 검사 통과. HEF checksum 및 native ABI/profile 일치.
 이는 실제 산업 현장의 정확도 시험이 아니다. 합성 fixture 통과를 recall 수치로 사용하지 않는다.
@@ -30,6 +31,21 @@
   서로 다른 외부 NAT의 WebRTC 직접 연결 성공까지 보장하지 않는다.
 - 낙상 빨간 배너/캡처 다이얼로그는 브라우저 로컬 fixture로 검증한다.
   실제 서비스에 가짜 경보나 외부 알림을 발행하지 않는다.
+
+## 연결 이력·드라이버 수정 후 확인 (2026-10-29 오후)
+
+- 14:53:08 KST Hailo 드라이버 최소 backport 로드. 14:58:46까지 `find_vma` WARNING 0회.
+  실제 추론을 계속 수행하면서 로컬/도메인 브라우저 연결·해제·MJPEG 전환을 시험했다.
+- 관측 시점: Dahua 15.0 FPS, AI 13.8 FPS, Hailo 14.9ms, `/health` 정상.
+  부하가 변하는 짧은 측정이므로 전후 성능 개선률로 해석하지 않는다.
+- 공개 URL을 연 Pi5 LAN Chromium에서 `rtc_playing`, decoded frames=21,
+  candidate `host ↔ host`, UDP 수신이 실제 JSONL에 기록됨을 확인했다.
+- WHEP 응답을 테스트 브라우저에서만 503으로 만든 경우 `fallback(reason=whep_failed)`
+  → 서버 `mjpeg_sent` → 브라우저 `mjpeg_decoded`를 확인했다. 실제 경보는 생성하지 않았다.
+- 오버레이 선택은 `overlay_selected`로 따로 기록. 공개 HTTPS POST 출처 검사 정상.
+- 서비스 재시작 전 연결 이력 56건 모두 재시작 후 복원, 저장 오류/제외 0건.
+- 모바일 화면 가로 넘침 및 JS 오류 없음. 새 로그 패널 고정 높이로 목록 증가에 따른 화면 밀림 제한.
+- 외부 LTE/다른 NAT WebRTC 성공 시험과 TURN 개통은 아직 하지 않았다.
 
 ## 산업 현장에서 추가할 검증
 

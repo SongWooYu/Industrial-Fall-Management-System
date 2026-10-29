@@ -1,0 +1,6 @@
+--- a/linux/vdma/memory.c
++++ b/linux/vdma/memory.c
+@@ -170 +170,3 @@
++        mmap_read_lock(current->mm);
+         vma = find_vma(current->mm, addr_or_fd);
++        mmap_read_unlock(current->mm);

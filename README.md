@@ -89,10 +89,13 @@ sudo systemctl restart industrial-fall
 - `/api/events/<id>/snapshot.jpg`: 감지한 프레임의 JPEG. 최대 50장, 장당 512 KB, TTL 1시간.
 - `/stream/dahua?overlay=true`: 오버레이 영상. `false`: 원본 MJPEG.
 - `/api/webrtc/dahua/whep`: WebRTC SDP 교환. 영상은 Pi5와 브라우저 간 전송.
+- `/api/video-connections`: 최근 영상 연결 이력 200건. 실제 WebRTC 수신/MJPEG 전환 사유 구분.
 
 이벤트·캡처는 프로세스 재시작 시 사라진다. 포즈 진단 로그는 `runtime/diagnostics`에
 20 MB × 최대 3개로 순환 보관한다. RAW 영상·얼굴 특징은 저장하지 않는다.
 MJPEG 동시 접속은 6개로 제한하고 추론은 접속자 수와 무관하게 한 번 수행한다.
+영상 연결 이력은 별도로 `runtime/logs/video-connections.jsonl`에 2 MB × 3개로
+순환 저장하며 재시작 후 복원한다. 공개 도메인으로 열었다는 것만으로 외부 WebRTC 성공은 아니다.
 
 웹 화면은 POC용 단일 Flask 프로세스다. 앱 인증은 별도 구현하지 않았다.
 공개 도메인의 열람 제한이 필요하면 기존 게이트웨이에서 제한해야 한다.
@@ -103,4 +106,7 @@ WSGI 멀티프로세스를 그대로 적용하면 Hailo를 중복 실행하므�
 - [구조·모델·상태의 의미](docs/ARCHITECTURE.md)
 - [스마트홈에서의 분리와 복구](docs/MIGRATION_2026-10-29.md)
 - [시험·산업 현장 검증 계획](docs/VALIDATION.md)
+- [영상 연결 이력·MJPEG 전환 확인](docs/VIDEO_CONNECTION_HISTORY.md)
+- [Hailo 커널 로그 폭주 수정·복구](docs/HAILO_KERNEL_LOG_FIX_2026-10-29.md)
+- [추가된 탐사 차량 코드 검토](docs/REVIEW_b917579.md)
 - [출처와 모델 배포 고지](THIRD_PARTY_NOTICES.md)

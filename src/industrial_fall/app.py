@@ -7,15 +7,35 @@ import time
 from flask import Flask, Response, abort, jsonify, render_template, request
 
 from .config import load_config
+from .connection_history import ConnectionHistory, access_scope, connection_id
 from .evidence import EVENT_ID
 from .pipeline import FallPipeline
+from .request_origin import same_origin_request
 from .webrtc import register_webrtc_routes
 
 
-def create_app(pipeline):
+def create_app(pipeline, connection_history=None):
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 131072
-    register_webrtc_routes(app)
+    history = connection_history if connection_history is not None else ConnectionHistory()
+    app.extensions["connection_history"] = history
+    register_webrtc_routes(app, history)
+
+    @app.route("/api/video-connections", methods=["GET", "POST"])
+    def video_connections():
+        if request.method in {"GET", "HEAD"}:
+            return jsonify(history.snapshot())
+        if not same_origin_request():
+            abort(403)
+        if request.mimetype != "application/json":
+            abort(415)
+        if request.content_length is None or request.content_length > 2048:
+            abort(413)
+        try:
+            accepted = history.record(request.get_json(silent=True), access=access_scope())
+        except ValueError:
+            return jsonify(error="Invalid connection observation"), 400
+        return jsonify(ok=accepted), 202 if accepted else 429
 
     @app.get("/")
     def index():
@@ -41,15 +61,22 @@ def create_app(pipeline):
     @app.get("/stream/dahua")
     def stream():
         overlay = request.args.get("overlay", "true").lower() not in {"false", "0", "off"}
+        cid, access = connection_id(request.args.get("cid")), access_scope()
+        fields = {"transport": "mjpeg", "overlay": overlay}
         if not pipeline.subscribe(overlay):
+            history.server("mjpeg_rejected", cid, access, reason="viewer_limit", **fields)
             return jsonify(error="동시 MJPEG 접속 한도(6명)에 도달했습니다."), 503
+        history.server("mjpeg_open", cid, access, **fields)
         released = False
+        started = time.monotonic()
 
         def release():
             nonlocal released
             if not released:
                 released = True
                 pipeline.unsubscribe(overlay)
+                history.server("mjpeg_closed", cid, access, reason="stream_closed",
+                               elapsed_ms=min(604800000, int((time.monotonic() - started) * 1000)), **fields)
 
         def frames():
             previous = -1
@@ -58,6 +85,9 @@ def create_app(pipeline):
                 while not pipeline.stop_event.is_set():
                     seq, jpeg = pipeline.jpeg(overlay)
                     if jpeg and (seq != previous or time.monotonic() - last_sent > 1):
+                        if previous == -1:
+                            # A server write is NOT proof the browser decoded a frame.
+                            history.server("mjpeg_sent", cid, access, **fields)
                         yield (b"--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
                                + str(len(jpeg)).encode() + b"\r\n\r\n" + jpeg + b"\r\n")
                         previous, last_sent = seq, time.monotonic()
@@ -94,7 +124,8 @@ def main():
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     config = load_config(args.config)
     pipeline = FallPipeline(config)
-    app = create_app(pipeline)
+    history = ConnectionHistory(Path(config["project_root"]) / "runtime/logs/video-connections.jsonl")
+    app = create_app(pipeline, history)
 
     def shutdown(_sig, _frame):
         raise KeyboardInterrupt
@@ -105,6 +136,7 @@ def main():
         app.run(host=config["server"]["host"], port=config["server"]["port"], threaded=True, use_reloader=False)
     finally:
         pipeline.stop()
+        history.close()
 
 
 if __name__ == "__main__":
