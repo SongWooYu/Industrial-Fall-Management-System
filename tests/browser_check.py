@@ -21,11 +21,12 @@ def wait_receipt(context, page, url, cid, events):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", default="http://127.0.0.1:8080")
+    parser.add_argument("--check-audio", action="store_true", help="Check natural clip playback with physical output muted")
     args = parser.parse_args()
     Path("runtime/checks").mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path="/usr/bin/chromium", headless=True,
-                                    args=["--no-sandbox", "--disable-dev-shm-usage"])
+                                    args=["--no-sandbox", "--disable-dev-shm-usage", "--mute-audio"])
         context = browser.new_context(viewport={"width": 1440, "height": 1050})
         page = context.new_page()
         errors = []
@@ -41,6 +42,14 @@ def main():
         page.wait_for_function("document.getElementById('connection').textContent.includes('AI 분석 중')", timeout=25000)
         page.wait_for_function("(document.querySelector('video')?.readyState >= 2) || document.querySelector('.stream').naturalWidth > 100", timeout=25000)
         print("Default transport:", page.locator('.transport-label').inner_text())
+        if args.check_audio:
+            assert page.locator('#audio-voice').input_value() == 'natural'
+            assert page.locator('#audio-voice option').count() == 2
+            page.click('#audio-test')
+            page.wait_for_function("document.getElementById('audio-status').textContent.includes('완료 · 안내형')", timeout=10000)
+            assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
+            page.locator('.alert-controls').screenshot(path='runtime/checks/voice-select.png')
+            print('Natural MP3 playback on deployed origin: OK (physical output muted)')
         cid = sessions[-1]
         receipts = wait_receipt(context, page, args.url, cid, {'rtc_playing','mjpeg_decoded'})
         print('Default receipt:', [{k:v for k,v in e.items() if k in ('event','frames_decoded','local_candidate','remote_candidate','protocol','access')} for e in receipts])

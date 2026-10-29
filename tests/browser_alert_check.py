@@ -18,7 +18,8 @@ HTML = subprocess.check_output([
 ], cwd=ROOT, env={**os.environ, 'PYTHONPATH': str(ROOT / 'src')}, text=True)
 
 MOCK_AUDIO = """
-window.audioCalls = []; window.tones = 0; window.cancellations = 0;
+window.audioCalls = []; window.clipCalls = []; window.tones = 0; window.cancellations = 0;
+window.clipStops = 0; window.clipDecodeHang = false;
 window.voices = [{name:'Korean test voice',lang:'ko-KR',localService:true}];
 window.speechFailure = false; window.speechHang = false;
 const synthesis = new EventTarget();
@@ -35,6 +36,10 @@ window.SpeechSynthesisUtterance = class {constructor(text) {this.text=text;}};
 window.AudioContext = class {
   constructor() {this.state='suspended'; this.currentTime=0; this.destination={};}
   async resume() {this.state='running';}
+  async decodeAudioData(data) {if(window.clipDecodeHang) return new Promise(()=>{});return {duration:2.88};}
+  createBufferSource() {return {connect(node){this.gain=node.gain;},disconnect(){},
+    start(){window.clipCalls.push({volume:this.gain.value});this.timer=setTimeout(()=>this.onended?.(),5);},
+    stop(){window.clipStops++;clearTimeout(this.timer);this.onended?.();}};}
   createGain() {return {gain:{setValueAtTime(){},linearRampToValueAtTime(){}},connect(){},disconnect(){}};}
   createOscillator() {return {frequency:{setValueAtTime(){}},connect(){},disconnect(){},start(){window.tones++;},stop(){}};}
 };
@@ -48,7 +53,7 @@ def event(n, kind):
 
 def main():
     fixture = {'state': 'normal', 'online': True, 'events': [event(1, 'fall_confirmed')],
-               'status_failure': False}
+               'status_failure': False, 'clip_failure': False}
     requests, errors = [], []
 
     def route_request(route):
@@ -57,6 +62,11 @@ def main():
         requests.append((request.method, path))
         if path == '/':
             route.fulfill(content_type='text/html', body=HTML)
+        elif path.startswith('/static/audio/'):
+            if fixture['clip_failure']:
+                route.fulfill(status=404, body='audio unavailable')
+            else:
+                route.fulfill(content_type='audio/mpeg', body=(ROOT / 'src/industrial_fall/static/audio' / Path(path).name).read_bytes())
         elif path.startswith('/static/'):
             name = Path(path).name
             # Keep tests isolated from live video, WHEP and connection telemetry.
@@ -83,7 +93,7 @@ def main():
 
     with sync_playwright() as p:
         browser = p.chromium.launch(executable_path='/usr/bin/chromium', headless=True,
-                                    args=['--no-sandbox', '--disable-dev-shm-usage'])
+                                    args=['--no-sandbox', '--disable-dev-shm-usage', '--mute-audio'])
         context = browser.new_context(viewport={'width': 1440, 'height': 1050})
         context.add_init_script(MOCK_AUDIO)
         context.route('**/*', route_request)
@@ -93,6 +103,8 @@ def main():
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'normal'")
         assert page.locator('#fall-notice').is_visible()
         assert page.evaluate('audioCalls.length') == 0, 'Old history must be silent'
+        assert page.locator('#audio-voice').input_value() == 'natural'
+        page.select_option('#audio-voice', 'browser')
 
         page.click('#audio-test')
         page.wait_for_function('audioCalls.length === 1')
@@ -106,6 +118,7 @@ def main():
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'normal'")
         assert not page.locator('#fall-notice').is_visible(), 'Tab acknowledgment survives reload'
         assert page.evaluate('audioCalls.length') == 0
+        assert page.locator('#audio-voice').input_value() == 'browser'
         page.click('#audio-enable')
         page.wait_for_function('audioCalls.length === 1')
         page.wait_for_timeout(1100)
@@ -202,11 +215,70 @@ def main():
         assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
         page.click('#acknowledge-fall')
         assert not page.locator('#fall-notice').is_visible()
+        page.select_option('#audio-voice', 'natural')
+        assert page.evaluate('clipCalls.length') == 0, 'Selecting a voice is silent'
+        assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
+        page.eval_on_selector('#audio-volume', "el => {el.value=60;el.dispatchEvent(new Event('input'));}")
+        page.click('#audio-test')
+        page.wait_for_function('clipCalls.length === 1')
+        assert page.evaluate('clipCalls[0].volume') == .6
+        assert page.evaluate('audioCalls.length') == 0, 'Natural mode must not use browser TTS'
+        page.click('#audio-test')
+        page.wait_for_function('clipCalls.length === 2')
+        assert sum(path.endswith('.mp3') for _, path in requests) == 1, 'Reuse one cached buffer'
+        page.reload()
+        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        assert page.locator('#audio-voice').input_value() == 'natural'
+        assert page.evaluate('clipCalls.length') == 0
+        page.click('#audio-enable')
+        page.wait_for_function('tones === 1')
+        assert page.evaluate('clipCalls.length') == 0, 'Enabling is not a fall announcement'
+        fixture['events'].insert(0, event(11, 'fall_confirmed'))
+        page.wait_for_function('clipCalls.length === 1')
+        page.wait_for_timeout(1100)
+        assert page.evaluate('clipCalls.length') == 1, 'Natural alerts are deduplicated too'
+        page.click('#audio-enable')
+        # A missing file is reported and the original voice still works.
+        fixture['clip_failure'] = True
+        page.reload()
+        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        page.click('#audio-test')
+        page.wait_for_function('audioCalls.length === 1')
+        assert '기존 음성으로 대체' in page.locator('#audio-status').inner_text()
+        fixture['clip_failure'] = False
+        page.click('#audio-test')
+        page.wait_for_function('clipCalls.length === 1')
+        # Cancel an in-flight decode by changing voice: it must not play later.
+        page.reload()
+        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        page.evaluate('window.clipDecodeHang=true')
+        page.click('#audio-test')
+        page.select_option('#audio-voice', 'browser')
+        page.wait_for_timeout(6200)
+        assert page.evaluate('audioCalls.length + clipCalls.length') == 0
+        page.select_option('#audio-voice', 'natural')
+        page.click('#audio-test')
+        page.wait_for_function('audioCalls.length === 1', timeout=8000)
+        assert '기존 음성으로 대체' in page.locator('#audio-status').inner_text()
         assert all(method == 'GET' for method, _ in requests)
         assert not errors, errors
+        context.close()
+        # Real Chromium decoding/playback, but physical audio is muted by the
+        # launch flag. The mocked engines above cannot prove the MP3 is usable.
+        real = browser.new_context(viewport={'width': 1440, 'height': 1050})
+        real.route('**/*', route_request)
+        page = real.new_page()
+        page.on('pageerror', lambda error: errors.append(str(error)))
+        page.goto('http://industrial.test/')
+        page.click('#audio-test')
+        page.wait_for_function("document.getElementById('audio-status').textContent.includes('완료 · 안내형')", timeout=10000)
+        assert not errors, errors
+        real.close()
         browser.close()
     print('Browser alerts: states, persistent notice/ack, silent baseline, dedup, read-only sound test,')
     print('volume, muted/hidden tabs, unavailable/error/hung speech fallback and responsive layout PASS.')
+    print('Two voices: preference, MP3 playback/cache, automatic alert, failure fallback, cancellation PASS.')
+    print('Real Chromium MP3 decode/playback PASS (physical output muted).')
 
 
 if __name__ == '__main__':

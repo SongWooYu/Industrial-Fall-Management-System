@@ -5,7 +5,7 @@
   <title>산업안전 낙상관리시스템</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261029-alerts1') }}">
   <script defer src="{{ url_for('static', filename='stream-player.js') }}"></script>
-  <script defer src="{{ url_for('static', filename='browser-alerts.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261029-voices2') }}"></script>
   <script defer src="{{ url_for('static', filename='dashboard.js', v='20261029-alerts1') }}"></script>
   <script defer src="{{ url_for('static', filename='connection-history.js') }}"></script>
 </head>
@@ -20,7 +20,7 @@
     </section>
     <section class="alert-controls panel" aria-label="브라우저 음성 알림">
       <div><strong>브라우저 음성 알림</strong><p id="audio-status" role="status">꺼짐 · 이 기기의 스피커에서 재생합니다.</p></div>
-      <div class="tools"><button id="audio-enable" type="button" aria-pressed="false">음성 알림 켜기</button><button id="audio-test" type="button">소리만 테스트</button><label class="volume" for="audio-volume">음량 <input id="audio-volume" type="range" min="0" max="100" step="5" value="80"><output id="audio-volume-value" for="audio-volume">80%</output></label></div>
+      <div class="tools"><label class="sr-only" for="audio-voice">알림 목소리</label><select id="audio-voice"><option value="natural">자연스러운 음성 · 안내형</option><option value="browser">기존 음성 · 브라우저 TTS</option></select><button id="audio-enable" type="button" aria-pressed="false">음성 알림 켜기</button><button id="audio-test" type="button">소리만 테스트</button><label class="volume" for="audio-volume">음량 <input id="audio-volume" type="range" min="0" max="100" step="5" value="80"><output id="audio-volume-value" for="audio-volume">80%</output></label></div>
       <p class="audio-note">새 낙상 확정 시 음성 안내 · 테스트는 감지 기록을 만들지 않습니다. 새로고침 후에는 다시 켜 주세요. 탭 종료·절전·백그라운드에서는 알림이 보장되지 않습니다.</p>
     </section>
     <section id="fall-notice" class="fall-notice" aria-label="확인하지 않은 낙상 기록" hidden>
