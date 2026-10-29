@@ -1,0 +1,18 @@
+Generated using built-in image generation.
+Style: photorealistic, landscape 4:3, clear subject, uncluttered background.
+
+butane_can: one portable camping butane gas cartridge, long cylindrical metal can with red printed sleeve and exposed small metal valve, lying diagonally on plain gray concrete
+
+spray_can: one aerosol spray can, white metal cylindrical can with blue color band, exposed white push spray nozzle, standing on plain gray concrete
+
+battery: two clearly visible ordinary AA cylindrical batteries, one upright and one lying diagonally on plain gray concrete
+
+knife_scissors: one ordinary kitchen knife and one pair of household scissors, placed separately side by side on plain gray concrete, all blades and handles fully visible
+
+bottle: one empty clear glass beverage bottle with narrow neck, upright on plain gray concrete
+
+wall_crack: close-up of gray concrete wall with a clear large branching dark crack, intact wall around it, no rebar no water
+
+exposed_rebar: close-up damaged concrete wall with a spalled section exposing three obvious rusty ribbed steel reinforcement bars, no tools
+
+water_leakage_stain: close-up white plaster wall with an obvious brown water leakage stain, irregular brown rings and damp darker patch with downward streaks, no cracks no rebar
