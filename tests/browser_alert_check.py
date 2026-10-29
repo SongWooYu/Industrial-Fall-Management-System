@@ -36,9 +36,9 @@ window.SpeechSynthesisUtterance = class {constructor(text) {this.text=text;}};
 window.AudioContext = class {
   constructor() {this.state='suspended'; this.currentTime=0; this.destination={};}
   async resume() {this.state='running';}
-  async decodeAudioData(data) {if(window.clipDecodeHang) return new Promise(()=>{});return {duration:2.88};}
+  async decodeAudioData(data) {if(window.clipDecodeHang) return new Promise(()=>{});return {duration:2.88,bytes:data.byteLength};}
   createBufferSource() {return {connect(node){this.gain=node.gain;},disconnect(){},
-    start(){window.clipCalls.push({volume:this.gain.value});this.timer=setTimeout(()=>this.onended?.(),5);},
+    start(){window.clipCalls.push({volume:this.gain.value,bytes:this.buffer.bytes});this.timer=setTimeout(()=>this.onended?.(),5);},
     stop(){window.clipStops++;clearTimeout(this.timer);this.onended?.();}};}
   createGain() {return {gain:{setValueAtTime(){},linearRampToValueAtTime(){}},connect(){},disconnect(){}};}
   createOscillator() {return {frequency:{setValueAtTime(){}},connect(){},disconnect(){},start(){window.tones++;},stop(){}};}
@@ -238,6 +238,35 @@ def main():
         page.wait_for_timeout(1100)
         assert page.evaluate('clipCalls.length') == 1, 'Natural alerts are deduplicated too'
         page.click('#audio-enable')
+        # The Pi4 reconstruction has its own cached file, not the SunHi buffer.
+        page.select_option('#audio-voice', 'espeak')
+        assert page.evaluate('clipCalls.length') == 1, 'Changing voice alone is silent'
+        page.click('#audio-test')
+        page.wait_for_function('clipCalls.length === 2')
+        assert page.evaluate('clipCalls.at(-1).bytes') == 21548
+        page.select_option('#audio-voice', 'natural')
+        page.click('#audio-test')
+        page.wait_for_function('clipCalls.length === 3')
+        assert page.evaluate('clipCalls.at(-1).bytes') == 23660
+        previous_requests = sum(path.endswith('.mp3') for _, path in requests)
+        page.select_option('#audio-voice', 'espeak')
+        page.click('#audio-test')
+        page.wait_for_function('clipCalls.length === 4')
+        assert sum(path.endswith('.mp3') for _, path in requests) == previous_requests
+        page.reload()
+        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        assert page.locator('#audio-voice').input_value() == 'espeak'
+        assert page.evaluate('clipCalls.length') == 0
+        page.click('#audio-enable')
+        page.wait_for_function('tones === 1')
+        assert page.evaluate('clipCalls.length') == 0
+        fixture['events'].insert(0, event(12, 'fall_confirmed'))
+        page.wait_for_function('clipCalls.length === 1')
+        assert page.evaluate('clipCalls.at(-1).bytes') == 21548
+        page.wait_for_timeout(1100)
+        assert page.evaluate('clipCalls.length') == 1, 'Pi4 voice must not repeat on each poll'
+        page.click('#audio-enable')
+        page.select_option('#audio-voice', 'natural')
         # A missing file is reported and the original voice still works.
         fixture['clip_failure'] = True
         page.reload()
@@ -248,6 +277,14 @@ def main():
         fixture['clip_failure'] = False
         page.click('#audio-test')
         page.wait_for_function('clipCalls.length === 1')
+        page.select_option('#audio-voice', 'espeak')
+        fixture['clip_failure'] = True
+        page.click('#audio-test')
+        page.wait_for_function('audioCalls.length === 2')
+        assert 'eSpeak NG 재생 불가' in page.locator('#audio-status').inner_text()
+        assert '기존 음성으로 대체' in page.locator('#audio-status').inner_text()
+        fixture['clip_failure'] = False
+        page.select_option('#audio-voice', 'natural')
         # Cancel an in-flight decode by changing voice: it must not play later.
         page.reload()
         page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
@@ -270,15 +307,17 @@ def main():
         page = real.new_page()
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://industrial.test/')
-        page.click('#audio-test')
-        page.wait_for_function("document.getElementById('audio-status').textContent.includes('완료 · 안내형')", timeout=10000)
+        for mode, label in [('natural', '안내형'), ('espeak', '예전 Pi4 · eSpeak NG')]:
+            page.select_option('#audio-voice', mode)
+            page.click('#audio-test')
+            page.wait_for_function("label => document.getElementById('audio-status').textContent.includes('완료 · ' + label)", arg=label, timeout=10000)
         assert not errors, errors
         real.close()
         browser.close()
     print('Browser alerts: states, persistent notice/ack, silent baseline, dedup, read-only sound test,')
     print('volume, muted/hidden tabs, unavailable/error/hung speech fallback and responsive layout PASS.')
-    print('Two voices: preference, MP3 playback/cache, automatic alert, failure fallback, cancellation PASS.')
-    print('Real Chromium MP3 decode/playback PASS (physical output muted).')
+    print('Three voices: preference, separate MP3 caches, automatic alert, failure fallback, cancellation PASS.')
+    print('Real Chromium SunHi/eSpeak MP3 decode/playback PASS (physical output muted).')
 
 
 if __name__ == '__main__':

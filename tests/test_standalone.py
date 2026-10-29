@@ -87,20 +87,23 @@ class StandaloneTest(unittest.TestCase):
         self.pipeline.analysis_error = "inference failure"
         self.assertEqual(self.client.get("/health").status_code, 503)
 
-    def test_two_voice_choices_and_static_clip_are_read_only(self):
+    def test_three_voice_choices_and_static_clips_are_read_only(self):
         html = self.client.get('/').get_data(as_text=True)
         self.assertIn('id="audio-voice"', html)
         self.assertIn('value="natural"', html)
         self.assertIn('value="browser"', html)
-        response = self.client.get('/static/audio/fall-detected-ko-sunhi-v1.mp3')
-        try:
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.mimetype, 'audio/mpeg')
-            self.assertGreater(len(response.data), 1000)
-            self.assertLess(len(response.data), 256 * 1024)
-            self.assertEqual(self.pipeline.events.recent(), [])
-        finally:
-            response.close()
+        self.assertIn('value="espeak"', html)
+        for voice in ('sunhi', 'espeak'):
+            with self.subTest(voice=voice):
+                response = self.client.get(f'/static/audio/fall-detected-ko-{voice}-v1.mp3')
+                try:
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(response.mimetype, 'audio/mpeg')
+                    self.assertGreater(len(response.data), 1000)
+                    self.assertLess(len(response.data), 256 * 1024)
+                    self.assertEqual(self.pipeline.events.recent(), [])
+                finally:
+                    response.close()
 
     def test_absent_invalid_and_stale_are_not_zero_risk(self):
         status = self.pipeline.status()
