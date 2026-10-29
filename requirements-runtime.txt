@@ -1,0 +1,6 @@
+# Pi OS apt packages are reused by .venv --system-site-packages.
+# Do NOT install a pip OpenCV wheel: this deployment needs GStreamer/Hailo.
+Flask==3.1.1
+numpy==2.2.4
+PyYAML==6.0.2
+python-dotenv==1.0.1

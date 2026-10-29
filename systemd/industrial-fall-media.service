@@ -1,0 +1,19 @@
+[Unit]
+Description=Industrial Fall Camera - H264 WebRTC Gateway
+Wants=network-online.target
+After=network-online.target
+Conflicts=smarthome-mediamtx.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/Industrial-Fall-Management-System
+ExecStart=/home/pi/Industrial-Fall-Management-System/.venv/bin/python /home/pi/Industrial-Fall-Management-System/scripts/run_mediamtx.py
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

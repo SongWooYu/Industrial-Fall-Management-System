@@ -1,0 +1,26 @@
+# H.264 pass-through; no re-encode and no secondary camera publisher.
+logLevel: warn
+rtsp: true
+rtspTransports: [tcp]
+rtspAddress: 127.0.0.1:8554
+rtmp: false
+hls: false
+srt: false
+moq: false
+playback: false
+api: false
+metrics: false
+pprof: false
+webrtc: true
+webrtcAddress: 127.0.0.1:8889
+webrtcEncryption: false
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcAdditionalHosts: [192.168.1.20]
+paths:
+  dahuaclean:
+    source: rtsp://127.0.0.1:9/unconfigured
+    sourceOnDemand: true
+    sourceOnDemandStartTimeout: 10s
+    sourceOnDemandCloseAfter: 10s
+    rtspTransport: tcp

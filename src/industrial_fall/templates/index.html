@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>산업안전 낙상관리시스템</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css') }}">
+  <script defer src="{{ url_for('static', filename='stream-player.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='dashboard.js') }}"></script>
+</head>
+<body>
+  <header><div><div class="eyebrow">INDUSTRIAL SAFETY · VISION</div><h1>산업안전 낙상관리시스템</h1></div>
+    <div class="tools"><span class="node">Pi5 · Hailo-8</span><label class="sr-only" for="theme">화면 테마</label><select id="theme"><option value="system">시스템 테마</option><option value="light">밝게</option><option value="dark">어둡게</option></select></div>
+  </header>
+  <main>
+    <section id="alarm" class="alarm" aria-live="polite" aria-atomic="true" data-state="unobserved">
+      <div><span class="eyebrow">낙상 감지 상태</span><h2 id="alarm-title">장비에 연결 중</h2><p id="alarm-detail">카메라와 분석 상태를 확인하고 있습니다.</p></div>
+      <div class="update"><span id="connection">대기</span><small id="updated">—</small></div>
+    </section>
+    <div class="layout">
+      <section class="panel monitor">
+        <div class="panel-head"><div><h2>현장 모니터</h2><span class="muted">Dahua · 낙상 감시 구역</span></div><div class="tools"><label class="sr-only" for="stream-mode">영상 모드</label><select id="stream-mode"><option value="auto">원본 영상 · WebRTC 우선</option><option value="overlay">분석 영상 · 박스·관절</option></select><button id="reconnect" type="button">재연결</button></div></div>
+        <div class="video-wrap"><img class="stream" data-camera="dahua" alt="산업 현장 실시간 낙상 감시 영상"><span class="transport-label">영상 연결 중</span></div>
+        <div class="metrics"><div><span>추적 중인 사람</span><strong id="people">—</strong></div><div><span>AI 분석 FPS</span><strong id="fps">—</strong></div><div><span>Hailo 추론</span><strong id="inference">—</strong></div><div><span>Pi5 입력 프레임 age</span><strong id="age">—</strong></div></div>
+        <div class="analysis"><div class="analysis-head"><strong id="readiness">분석 상태 확인 중</strong><span id="score">모델 점수 —</span></div><p id="analysis-detail">사람이 보이면 약 3.1초의 움직임을 관측합니다.</p><p class="muted" id="decision">모델 점수만으로 낙상을 확정하지 않습니다.</p></div>
+      </section>
+      <aside class="panel events-panel"><div class="panel-head"><div><h2>감지 기록</h2><span class="muted">최근 50개 · Pi5 로컬 보관</span></div><span class="count" id="event-count">0</span></div><div id="events" class="events"><p class="empty">아직 감지 기록이 없습니다.</p></div><p class="storage-note">캡처는 최대 50장·1시간 보관됩니다. 재시작 시 기록은 초기화됩니다.</p></aside>
+    </div>
+    <footer><span>Hailo YOLOv8s-Pose + EdgeFall · 단독 실행</span><span>개발·시연용 POC — 인증된 산업 안전 장치가 아닙니다.</span></footer>
+  </main>
+  <dialog id="evidence"><div class="panel-head"><h2 id="evidence-title">낙상 순간 캡처</h2><button id="close-evidence" type="button" aria-label="캡처 닫기">닫기 ×</button></div><img id="evidence-image" alt="낙상 감지 순간의 박스와 관절 캡처"><p id="evidence-detail"></p></dialog>
+</body>
+</html>

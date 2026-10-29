@@ -1,0 +1,23 @@
+[Unit]
+Description=Industrial Safety Fall Management - Pi5 Hailo
+Wants=network-online.target
+After=network-online.target
+Conflicts=smarthome-vision.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+SupplementaryGroups=video render
+WorkingDirectory=/home/pi/Industrial-Fall-Management-System
+Environment=PYTHONPATH=/home/pi/Industrial-Fall-Management-System/src
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/Industrial-Fall-Management-System/.venv/bin/python -m industrial_fall.app
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=35
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

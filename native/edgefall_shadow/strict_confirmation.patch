@@ -1,0 +1,160 @@
+--- a/tracker_hailo.h
++++ b/tracker_hailo.h
+@@ -18,0 +19 @@
++  unsigned previous_hip_mask = 0;
+@@ -33,0 +35 @@
++jetson_fall::TemporalFrame temporalFrameFrom(const Track&);
+--- a/tracker_hailo.cpp
++++ b/tracker_hailo.cpp
+@@ -32 +32,6 @@
+-  o.hip_y=hy; o.torso_angle_deg=std::atan2(std::abs(sx-hx),std::abs(sy-hy))*180.f/3.14159265f;
++  // Geometry thresholds use normalized hip Y. The frozen Hailo MLP does NOT:
++  // its feature 51 was fitted in 640-space pixels (kMean ~301..319).
++  // temporalFrameFrom below restores that historical feature contract only
++  // for the classifier, without changing the geometry units.
++  constexpr float kInferenceHeight = 640.0f;
++  o.hip_y=hy/kInferenceHeight; o.torso_angle_deg=std::atan2(std::abs(sx-hx),std::abs(sy-hy))*180.f/3.14159265f;
+@@ -34,0 +40,5 @@
++jetson_fall::TemporalFrame temporalFrameFrom(const Track& t) {
++  auto model_observation = t.observation;
++  model_observation.hip_y *= 640.0f;
++  return jetson_fall::makeTemporalFrame(&t.pose, model_observation, 640, 640);
++}
+@@ -47 +57,9 @@
+-    auto p=t->temporal.update(jetson_fall::makeTemporalFrame(&t->pose,t->observation,640,640),ts);
++    const unsigned hip_mask =
++        (t->pose.visible(jetson_fall::Joint::LeftHip) ? 1U : 0U) |
++        (t->pose.visible(jetson_fall::Joint::RightHip) ? 2U : 0U);
++    // Do not differentiate a two-hip midpoint against a single visible hip.
++    // Preserve the original raw pose/features for the pretrained MLP.
++    t->observation.motion_continuous = hip_mask != 0 &&
++        hip_mask == t->previous_hip_mask && t->observation.valid;
++    t->previous_hip_mask = t->observation.valid ? hip_mask : 0;
++    auto p=t->temporal.update(temporalFrameFrom(*t),ts);
+@@ -53,0 +72 @@
++    x.previous_hip_mask = 0;
+--- a/fall_detector.h
++++ b/fall_detector.h
+@@ -26,0 +27 @@
++    bool motion_continuous = true;
+@@ -61,0 +63 @@
++    bool geometry_candidate = false;
+@@ -119,0 +122 @@
++    double horizontal_since_sec_ = -1.0;
+--- a/fall_detector.cpp
++++ b/fall_detector.cpp
+@@ -51,0 +52 @@
++    horizontal_since_sec_ = -1.0;
+@@ -96,0 +98,16 @@
++    diagnostics_.geometry_candidate = false;
++    if (!o.valid || !o.motion_continuous) {
++        // A missing pose or a change in visible hips is not physical motion.
++        // Expire only unconfirmed evidence, never silently clear an alarm.
++        have_previous_ = false;
++        last_fast_drop_sec_ = -1.0;
++        horizontal_since_sec_ = -1.0;
++        if (state_ == FallState::Normal || state_ == FallState::Suspected) {
++            state_ = FallState::Normal;
++            suspected_since_sec_ = -1.0;
++            last_strong_evidence_sec_ = -1.0;
++            motion_triggered_ = false;
++            max_drop_distance_ = 0.0f;
++            have_baseline_hip_y_ = false;
++        }
++    }
+@@ -119,0 +137 @@
++        horizontal_since_sec_ = -1.0;
+@@ -125,0 +144 @@
++                horizontal_since_sec_ = -1.0;
+@@ -165,8 +183,0 @@
+-                    if (!cooldown && o.temporal_available && o.temporal_positive) {
+-                        state_ = FallState::Fallen;
+-                        recovery_since_sec_ = -1.0;
+-                        cooldown_until_sec_ = o.timestamp_sec + config_.cooldown_sec;
+-                        ++event_id_;
+-                        out.fall_event = true;
+-                        break;
+-                    }
+@@ -182 +192,0 @@
+-                        last_strong_evidence_sec_ = lying ? o.timestamp_sec : -1.0;
+@@ -185,0 +196,25 @@
++                        // At roughly 10 FPS, the downward impact and the final
++                        // horizontal box normally peak on adjacent samples.
++                        // Remember the strong descent for this candidate
++                        // instead of requiring every cue on one exact frame.
++                        const bool strong_motion =
++                            hip_speed >= 0.50f &&
++                            max_drop_distance_ >= 0.04f;
++                        last_strong_evidence_sec_ = strong_motion
++                            ? o.timestamp_sec : -1.0;
++                        const bool impact_posture =
++                            o.torso_angle_deg >= 65.0f &&
++                            o.bbox_aspect_ratio >= 1.50f;
++                        horizontal_since_sec_ =
++                            o.torso_angle_deg >= 75.0f &&
++                            o.bbox_aspect_ratio >= 0.90f
++                            ? o.timestamp_sec : -1.0;
++                        diagnostics_.geometry_candidate = strong_motion && impact_posture;
++                        if (diagnostics_.geometry_candidate &&
++                            o.temporal_available && o.temporal_positive) {
++                            state_ = FallState::Fallen;
++                            recovery_since_sec_ = -1.0;
++                            cooldown_until_sec_ = o.timestamp_sec + config_.cooldown_sec;
++                            ++event_id_;
++                            out.fall_event = true;
++                        }
+@@ -189,10 +224,2 @@
+-                case FallState::Suspected:
+-                    if (!cooldown && o.temporal_available && o.temporal_positive) {
+-                        state_ = FallState::Fallen;
+-                        recovery_since_sec_ = -1.0;
+-                        cooldown_until_sec_ = o.timestamp_sec + config_.cooldown_sec;
+-                        ++event_id_;
+-                        out.fall_event = true;
+-                        break;
+-                    }
+-                    if (lying && enough_evidence) {
++                case FallState::Suspected: {
++                    if (hip_speed >= 0.50f && max_drop_distance_ >= 0.04f) {
+@@ -201 +228,23 @@
+-                    if (!config_.temporal_confirmation_required && motion_triggered_ && lying && enough_evidence &&
++                    const bool foreshortened_posture =
++                        o.torso_angle_deg >= 75.0f &&
++                        o.bbox_aspect_ratio >= 0.90f;
++                    if (foreshortened_posture) {
++                        if (horizontal_since_sec_ < 0.0) {
++                            horizontal_since_sec_ = o.timestamp_sec;
++                        }
++                    } else {
++                        horizontal_since_sec_ = -1.0;
++                    }
++                    const bool impact_posture =
++                        o.torso_angle_deg >= 65.0f &&
++                        o.bbox_aspect_ratio >= 1.50f;
++                    const bool windowed_impact =
++                        last_strong_evidence_sec_ >= 0.0 &&
++                        o.timestamp_sec - last_strong_evidence_sec_ <=
++                            config_.suspected_timeout_sec &&
++                        impact_posture;
++                    const bool persistent_foreshortened_posture =
++                        horizontal_since_sec_ >= 0.0 &&
++                        o.timestamp_sec - horizontal_since_sec_ >= 0.80;
++                    const bool standard_candidate =
++                        motion_triggered_ && lying && enough_evidence &&
+@@ -203 +252,7 @@
+-                        o.timestamp_sec - suspected_since_sec_ >= config_.confirmation_sec) {
++                        o.timestamp_sec - suspected_since_sec_ >= config_.confirmation_sec;
++                    diagnostics_.geometry_candidate = !cooldown &&
++                        (windowed_impact || persistent_foreshortened_posture || standard_candidate);
++                    // All confirmation routes require the learned gate.
++                    // Geometry-only evidence remains observable, not an alarm.
++                    if (diagnostics_.geometry_candidate &&
++                        o.temporal_available && o.temporal_positive) {
+@@ -213,0 +269 @@
++                        horizontal_since_sec_ = -1.0;
+@@ -218,0 +275 @@
++                }
+@@ -226,0 +284 @@
++                            horizontal_since_sec_ = -1.0;
+@@ -245,0 +304 @@
++                        horizontal_since_sec_ = -1.0;

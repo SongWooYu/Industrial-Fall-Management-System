@@ -1,0 +1,37 @@
+server:
+  host: 0.0.0.0
+  port: 8080
+  stream_fps: 10
+  jpeg_quality: 80
+  max_stream_clients: 6
+
+camera:
+  id: dahua
+  label: 산업 현장 · 낙상 감시 카메라
+  url: ${DAHUA_RTSP_URL}
+  transport: tcp
+  backend: gstreamer
+  codec: h264
+  latency_ms: 100
+  decode_width: 960
+  decode_height: 540
+  low_latency: true
+
+fall_detection:
+  enabled: true
+  model: runtime/models/yolov8s_pose_v2_15_h8.hef
+  hailo_postprocess: /usr/local/hailo/resources/so/libyolov8pose_postprocess.so
+  hailo_whole_buffer: /usr/lib/aarch64-linux-gnu/hailo/tappas/post_processes/cropping_algorithms/libwhole_buffer.so
+  confidence: 0.0
+  hailo_timeout_seconds: 3.0
+  # Frozen model: 48 unique frames, 15 FPS target. Do not duplicate frames.
+  analysis_fps: 15
+  edgefall:
+    enabled: true
+    library: runtime/native/libedgefall_shadow.so
+    keypoint_confidence: 0.25
+    diagnostics:
+      enabled: true
+      path: runtime/diagnostics/dahua-edgefall.jsonl
+      max_bytes: 20000000
+      backups: 2

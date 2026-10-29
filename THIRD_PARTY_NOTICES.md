@@ -1,0 +1,26 @@
+# 재사용 코드·모델 출처
+
+이 프로젝트는 사용자 관리 `SongWooYu/Home-Safety-System`의 낙상 관련 구현
+(기준 commit `1cac57e`)에서 분리했다. 해당 저장소의 스마트홈 기능이나 Git 이력을 포함하지 않는다.
+
+## EdgeFallKit
+
+- Upstream: https://github.com/suharvest/edgefallkit
+- Pinned commit: `ef3bda2fd865fe6b80119fb1c896a63bfc4228ee`.
+- License: Apache-2.0. 원문: `licenses/EdgeFallKit-Apache-2.0.txt`.
+- 로컬 변경: native C ABI bridge, `strict_confirmation.patch`(v6), 별도 Python 입력/로컬 이벤트 연결.
+- tracker, temporal classifier와 frozen Hailo weights는 setup script가 위 commit에서 빌드한다.
+- `native/edgefall_shadow`의 `shadow`는 ABI 호환 이름이며 운영은 단일 경로다.
+
+## YOLOv8s-Pose / Hailo
+
+Hailo Model Zoo의 v2.15 Hailo-8 HEF를 사용한다. HEF·Hailo SDK·펌웨어는 이 저장소에
+재배포하지 않는다. EdgeFallKit Apache-2.0 라이선스가 이 외부 모델·SDK까지 재라이선스하지 않는다.
+업스트림 Ultralytics/Hailo 모델 사용·상용 배포 조건은 별도로 확인해야 한다.
+`--accept-upstream-license`는 조건 확인 표시이지 추가 사용권 부여가 아니다.
+
+## 기타 런타임
+
+OpenCV, NumPy, GStreamer, Flask, MediaMTX, HailoRT/TAPPAS는 각자 라이선스와
+OS/공급자 설치 방식으로 사용한다. 시스템 package 및 실행 binary를 Git에 포함하지 않는다.
+얼굴 모델, 학습 데이터셋, 촬영 영상은 포함하지 않는다.
