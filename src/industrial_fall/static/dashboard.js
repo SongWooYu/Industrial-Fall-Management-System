@@ -9,7 +9,7 @@
   }
   theme.addEventListener('change', applyTheme); applyTheme();
   const titles = {normal:'확정 경보 없음', suspected:'낙상 의심 · 확인 중', fallen:'낙상 감지 · 현장 확인 필요', recovering:'낙상 회복 동작 관측 중', unobserved:'판정 대상 없음'};
-  const badges = {normal:['관측 중','확정 경보 없음 · 안전 보증 아님'], suspected:['낙상 의심','움직임 확인 중 · 아직 확정 전'], fallen:['낙상 감지','현장 확인 필요'], recovering:['낙상 회복 중','회복 동작 관측 · 안전 확인 필요'], unobserved:['판정 대상 없음','사람·관절이 보이는지 확인해 주세요.'], offline:['분석 연결 끊김','현재 낙상 상태를 알 수 없습니다.']};
+  const badges = {suspected:'낙상 의심', fallen:'낙상 감지', recovering:'낙상 회복 중'};
   const eventTitles = {fall_confirmed:'낙상 감지',fall_suspected:'낙상 의심',fall_recovering:'회복 동작 관측',fall_cleared:'감지 상태 해제',tracking_lost:'추적 종료 · 회복 여부 미확인'};
   const date = value => new Date(value).toLocaleString('ko-KR', {hour12:false});
   let pendingFall = null, acknowledged = [];
@@ -32,10 +32,12 @@
     $('events').scrollIntoView({behavior:'smooth', block:'nearest'});
   });
   function showBadge(state) {
-    const display = badges[state] || badges.unobserved;
+    // The video stays clear unless there is a current fall-related warning.
+    // Offline/no-track details remain in the status panel, not over the image.
+    const display = badges[state] || '';
     $('video-alarm').dataset.state = state;
-    $('video-alarm-title').textContent = display[0];
-    $('video-alarm-detail').textContent = display[1];
+    $('video-alarm-title').textContent = display;
+    $('video-alarm').hidden = !display;
     document.querySelectorAll('[data-stage]').forEach(el => {
       el.classList.toggle('active', el.dataset.stage === state);
       if (el.dataset.stage === state) el.setAttribute('aria-current', 'step');

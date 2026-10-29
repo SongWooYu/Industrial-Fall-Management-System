@@ -102,6 +102,12 @@ class StandaloneTest(unittest.TestCase):
         finally:
             response.close()
 
+    def test_video_warning_is_hidden_until_a_fall_state_arrives(self):
+        html = self.client.get('/').get_data(as_text=True)
+        self.assertNotIn('현재 AI 판정', html)
+        self.assertNotIn('video-alarm-detail', html)
+        self.assertIn('aria-atomic="true" hidden><strong id="video-alarm-title"></strong>', html)
+
     def test_retired_voice_is_not_offered_or_served(self):
         html = self.client.get('/').get_data(as_text=True)
         self.assertNotIn('value="espeak"', html)

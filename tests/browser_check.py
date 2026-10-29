@@ -97,6 +97,13 @@ def main():
         context.route('**/snapshot.jpg', lambda route: route.fulfill(content_type='image/png', body=png))
         page.wait_for_function("document.getElementById('alarm').dataset.state === 'fallen'")
         assert '현장 확인 필요' in page.locator('#alarm-title').inner_text()
+        assert page.locator('#video-alarm').is_visible()
+        assert page.locator('#video-alarm-title').inner_text() == '낙상 감지'
+        assert page.locator('#video-alarm').evaluate('el => getComputedStyle(el).backgroundColor') == 'rgb(195, 38, 52)'
+        assert page.get_by_text('현재 AI 판정', exact=True).count() == 0
+        warning = page.locator('#video-alarm').bounding_box()
+        video = page.locator('.video-wrap').bounding_box()
+        assert 0 < warning['y'] - video['y'] <= 20
         page.get_by_role('button', name='낙상 순간 캡처 확인').click()
         assert page.locator('#evidence').is_visible()
         page.keyboard.press('Escape')

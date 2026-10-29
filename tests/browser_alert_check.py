@@ -52,6 +52,8 @@ def event(n, kind):
 
 
 def main():
+    checks = ROOT / 'runtime/checks'
+    checks.mkdir(parents=True, exist_ok=True)
     fixture = {'state': 'normal', 'online': True, 'events': [event(1, 'fall_confirmed')],
                'status_failure': False, 'clip_failure': False}
     requests, errors = [], []
@@ -101,6 +103,8 @@ def main():
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://industrial.test/')
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'normal'")
+        assert page.locator('#video-alarm').is_hidden(), 'Normal must not cover the image'
+        assert page.locator('#video-alarm-title').text_content() == ''
         assert page.locator('#fall-notice').is_visible()
         assert page.evaluate('audioCalls.length') == 0, 'Old history must be silent'
         assert page.locator('#audio-voice').input_value() == 'natural'
@@ -128,13 +132,27 @@ def main():
             (2, 'suspected', 'fall_suspected', '낙상 의심'),
             (3, 'fallen', 'fall_confirmed', '낙상 감지'),
             (4, 'recovering', 'fall_recovering', '낙상 회복 중'),
-            (5, 'normal', 'fall_cleared', '관측 중'),
-            (6, 'unobserved', 'tracking_lost', '판정 대상 없음'),
+            (5, 'normal', 'fall_cleared', ''),
+            (6, 'unobserved', 'tracking_lost', ''),
         ]:
             fixture['state'] = state
             fixture['events'].insert(0, event(n, kind))
             page.wait_for_function('(s) => document.getElementById("video-alarm").dataset.state === s', arg=state)
-            assert page.locator('#video-alarm-title').inner_text() == caption
+            assert page.locator('#video-alarm-title').text_content() == caption
+            badge = page.locator('#video-alarm')
+            if state in ('suspected', 'fallen', 'recovering'):
+                assert badge.is_visible()
+                expected_colors = {'suspected': 'rgb(246, 195, 67)',
+                                   'fallen': 'rgb(195, 38, 52)',
+                                   'recovering': 'rgb(9, 100, 129)'}
+                assert badge.evaluate('el => getComputedStyle(el).backgroundColor') == expected_colors[state]
+                assert page.locator('#video-alarm-title').evaluate('el => parseFloat(getComputedStyle(el).fontSize)') >= 28
+                image = page.locator('.video-wrap').bounding_box()
+                bounds = badge.bounding_box()
+                assert 0 < bounds['y'] - image['y'] <= 20, 'Alert belongs at the top of the video'
+                page.locator('.video-wrap').screenshot(path=str(checks / f'alert-{state}.png'))
+            else:
+                assert badge.is_hidden(), 'No video card for normal/no-track states'
             if state in ('fallen', 'recovering', 'normal', 'unobserved'):
                 assert page.locator('#fall-notice').is_visible()
         assert page.evaluate('audioCalls.length') == 2, 'Only the new confirmed event speaks'
@@ -147,14 +165,15 @@ def main():
         fixture['state'] = 'normal'
         fixture['events'][0:0] = [event(8, 'fall_cleared'), event(7, 'fall_confirmed')]
         page.wait_for_function('audioCalls.length === 3')
-        assert page.locator('#video-alarm-title').inner_text() == '관측 중'
+        assert page.locator('#video-alarm').is_hidden()
         assert page.locator('#fall-notice').is_visible()
         page.click('#acknowledge-fall')
         fixture['online'] = False
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'offline'")
+        assert page.locator('#video-alarm').is_hidden()
         fixture['status_failure'] = True
         page.wait_for_function("document.getElementById('alarm-title').textContent === '서버 연결 끊김'")
-        assert page.locator('#video-alarm-title').inner_text() == '분석 연결 끊김'
+        assert page.locator('#video-alarm').is_hidden()
         fixture['status_failure'] = False
         fixture['online'] = True
 
@@ -203,12 +222,23 @@ def main():
                 image = page.locator('.video-wrap').bounding_box()
                 assert badge['x'] >= image['x'] and badge['y'] >= image['y']
                 assert badge['x'] + badge['width'] <= image['x'] + image['width']
+                assert badge['y'] + badge['height'] <= image['y'] + image['height']
+                transport = page.locator('.transport-label').bounding_box()
+                assert badge['y'] + badge['height'] <= transport['y'], 'Warning and transport labels must not overlap'
+                if theme == 'light' and width == 390:
+                    page.locator('.video-wrap').screenshot(path=str(checks / 'alert-fallen-mobile.png'))
+        # A connection failure must clear an active warning, not display stale AI state.
+        fixture['online'] = False
+        page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'offline'")
+        assert page.locator('#video-alarm').is_hidden()
+        assert '분석 연결 확인 필요' in page.locator('#alarm-title').inner_text()
+        fixture['online'] = True
         # Losing server history (restart or the 50-item bound) must not dismiss
         # this tab's unacknowledged historical fall, including after a reload.
         fixture['events'] = []
         fixture['state'] = 'unobserved'
         page.reload()
-        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
         assert page.locator('#fall-notice').is_visible()
         assert page.locator('#event-count').inner_text() == '0'
         assert page.evaluate('audioCalls.length') == 0
@@ -227,7 +257,7 @@ def main():
         page.wait_for_function('clipCalls.length === 2')
         assert sum(path.endswith('.mp3') for _, path in requests) == 1, 'Reuse one cached buffer'
         page.reload()
-        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
         assert page.locator('#audio-voice').input_value() == 'natural'
         assert page.evaluate('clipCalls.length') == 0
         page.click('#audio-enable')
@@ -241,7 +271,7 @@ def main():
         # A retired saved voice migrates silently to the supported default.
         page.evaluate("localStorage.setItem('industrial-voice-mode', 'espeak')")
         page.reload()
-        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
         assert page.locator('#audio-voice option').count() == 2
         assert page.locator('#audio-voice').input_value() == 'natural'
         assert page.evaluate("localStorage.getItem('industrial-voice-mode')") == 'natural'
@@ -251,7 +281,7 @@ def main():
         # A missing file is reported and the original voice still works.
         fixture['clip_failure'] = True
         page.reload()
-        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
         page.click('#audio-test')
         page.wait_for_function('audioCalls.length === 1')
         assert '기존 음성으로 대체' in page.locator('#audio-status').inner_text()
@@ -260,7 +290,7 @@ def main():
         page.wait_for_function('clipCalls.length === 1')
         # Cancel an in-flight decode by changing voice: it must not play later.
         page.reload()
-        page.wait_for_function("document.getElementById('video-alarm-title').textContent === '판정 대상 없음'")
+        page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
         page.evaluate('window.clipDecodeHang=true')
         page.click('#audio-test')
         page.select_option('#audio-voice', 'browser')
