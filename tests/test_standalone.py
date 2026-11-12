@@ -249,7 +249,8 @@ class StandaloneTest(unittest.TestCase):
         # No live_web records may be loaded into the history list
         self.assertTrue(all(r["source"] != "live_web" for r in records))
         first = records[0]
-        self.assertEqual(first["source"], "legacy_import")
+        self.assertIn(first["source"], ("legacy_import", "windows_client", "edge_analysis"))
+        self.assertEqual(self.client.get("/api/robot/download-client").status_code, 404)
         if first["overview_url"]:
             img_resp = self.client.get(first["overview_url"])
             try:

@@ -36,7 +36,7 @@ from typing import Any
 
 import cv2
 import numpy as np
-from flask import Response, abort, jsonify, request, send_file
+from flask import Response, abort, jsonify, request
 
 from .config import _load_dotenv
 from .request_origin import same_origin_request
@@ -1078,18 +1078,6 @@ def register_robot_routes(app, monitor: RobotMonitor) -> None:
             return jsonify({"ok": True, "capture": res, "status": monitor.snapshot()}), 201
         except ValueError as exc:
             return jsonify(error=str(exc)), 400
-
-    @app.get("/api/robot/download-client")
-    def robot_download_client():
-        client_path = monitor.pc_code_dir / "car_tk_clientV3.py"
-        if not client_path.is_file():
-            abort(404)
-        return send_file(
-            client_path,
-            mimetype="text/x-python",
-            as_attachment=True,
-            download_name="car_tk_clientV3.py",
-        )
 
     @app.get("/stream/robot")
     def robot_stream():
