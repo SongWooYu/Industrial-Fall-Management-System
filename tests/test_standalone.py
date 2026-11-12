@@ -250,6 +250,33 @@ class StandaloneTest(unittest.TestCase):
         cfg_data = cfg_resp.get_json()
         self.assertEqual(cfg_data["vision"]["mode"], "helmet")
         self.assertFalse(cfg_data["robot"]["stream_enabled"])
+        # Cross-origin and unauthenticated external Cloudflare tunnel requests to /api/robot/config must be 403
+        self.assertEqual(
+            self.client.post(
+                "/api/robot/config",
+                json={"mode": "off"},
+                headers={"Origin": "https://evil.example"},
+            ).status_code,
+            403,
+        )
+        self.assertEqual(
+            self.client.post(
+                "/api/robot/config",
+                json={"mode": "off"},
+                headers={"Cf-Connecting-Ip": "203.0.113.10"},
+            ).status_code,
+            403,
+        )
+
+    def test_confirmed_incidents_are_not_evicted_by_suspected_flood(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            journal = EventJournal(limit=50, storage_dir=tmpdir)
+            confirmed = journal.emit("fall_confirmed", track=track("fallen"), snapshot=(b"jpeg-data", {"frame_seq": 1}))
+            for i in range(100):
+                journal.emit("fall_suspected", track=track("suspected", track_id=i + 2))
+            recent = journal.recent()
+            self.assertEqual(len(recent), 50)
+            self.assertIn(confirmed["id"], [e["id"] for e in recent])
 
     def test_car_ws_server_monitor_endpoints_are_isolated_from_control(self):
         import ast
@@ -257,6 +284,7 @@ class StandaloneTest(unittest.TestCase):
 
         server_path = Path("src/RaspberryPi5_Car/Rasp5Car_source/Rasp5_code/car_ws_serverV3.py")
         source = server_path.read_text(encoding="utf-8")
+        self.assertNotIn("edge-monitor-v3-7f9a2c4e8b1d6f3a", source)
         tree = ast.parse(source)
         funcs = {
             node.name: node
@@ -279,10 +307,20 @@ class StandaloneTest(unittest.TestCase):
             self.assertNotIn("video_sockets", handler_src)
 
         monitor_client_src = Path("src/industrial_fall/robot_monitor.py").read_text(encoding="utf-8")
+        self.assertNotIn("edge-monitor-v3-7f9a2c4e8b1d6f3a", monitor_client_src)
         self.assertIn('"/monitor/video"', monitor_client_src)
         self.assertIn('"/monitor/status"', monitor_client_src)
         self.assertIn('"X-Monitor-Key"', monitor_client_src)
         self.assertNotIn("send_json", monitor_client_src)
+
+        stream_player_src = Path("src/industrial_fall/static/stream-player.js").read_text(encoding="utf-8")
+        self.assertIn("img.stream[data-camera]", stream_player_src)
+        self.assertNotIn('querySelectorAll(".stream")', stream_player_src)
+        self.assertIn("industrial-tab-changed", stream_player_src)
+
+        dashboard_src = Path("src/industrial_fall/static/dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("industrial-tab-changed", dashboard_src)
+        self.assertNotIn("new Event('online')", dashboard_src)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 /* WHEP first; bounded startup/stall detection; exactly one active transport. */
 (() => {
+  const cameraImages = () => document.querySelectorAll("img.stream[data-camera]");
   const players = new Map();
   const blank = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
   let overlays = false, pendingReports = 0;
@@ -23,7 +24,7 @@
   const selector = document.getElementById("stream-mode");
   selector.addEventListener("change", () => {
     overlays = selector.value === "overlay";
-    document.querySelectorAll(".stream").forEach(start);
+    cameraImages().forEach(start);
   });
   // During RTC the fallback img itself is hidden, but its video panel is active.
   function visible(img) { return !document.hidden && !img.parentElement.closest("[hidden]"); }
@@ -164,7 +165,7 @@
       }, 1500);
     } catch (_) { fallback(img, state, failure); }
   }
-  document.querySelectorAll(".stream").forEach(img => img.addEventListener("error", () => {
+  cameraImages().forEach(img => img.addEventListener("error", () => {
     const state = players.get(img);
     if (state?.mode === "mjpeg" && visible(img)) {
       state.mjpegFailed = true; state.mjpegReady = false;
@@ -178,11 +179,12 @@
       }, 3000);
     }
   }));
-  window.addEventListener("pagehide", () => document.querySelectorAll(".stream").forEach(img => stop(img, "pagehide")));
-  const resume = () => document.querySelectorAll(".stream").forEach(img => visible(img) ? start(img) : stop(img, "hidden"));
+  window.addEventListener("pagehide", () => cameraImages().forEach(img => stop(img, "pagehide")));
+  const resume = () => cameraImages().forEach(img => visible(img) ? start(img) : stop(img, "hidden"));
   document.addEventListener("visibilitychange", resume);
   window.addEventListener("pageshow", event => { if (event.persisted) resume(); });
   window.addEventListener("online", resume);
+  window.addEventListener("industrial-tab-changed", resume);
   document.getElementById("reconnect").addEventListener("click", resume);
   resume();
 })();

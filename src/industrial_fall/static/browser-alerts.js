@@ -1,20 +1,37 @@
-/* Browser-only natural speech alert: fixed SunHiNeural MP3 clip, client OS volume. */
+/* Browser-only natural speech alert: default enabled, SunHiNeural MP3 clip, client OS volume. */
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
   const naturalUrl = '/static/audio/fall-detected-ko-sunhi-v1.mp3';
-  let enabled = false, generation = 0, speechTimer, finishTimer;
+  const enabled = true;
+  let generation = 0, speechTimer, finishTimer;
   let context, oscillator, unlocked = Promise.resolve();
   let clipSource, clipPromise;
-  const status = text => { $('audio-status').textContent = text; };
+  const status = (text, ready = false) => {
+    const el = $('audio-status');
+    if (!el) return;
+    el.textContent = text;
+    el.dataset.ready = String(Boolean(ready));
+  };
 
   function unlock() {
     const Audio = window.AudioContext || window.webkitAudioContext;
     try {
       if (!context && Audio) context = new Audio();
-      if (context?.state === 'suspended') unlocked = context.resume().catch(() => {});
+      if (context?.state === 'suspended') {
+        unlocked = context.resume().then(() => {
+          if (context?.state === 'running' && $('audio-status')?.textContent === '소리 확인 필요') {
+            status('자동 음성 알림 활성', true);
+          }
+        }).catch(() => {});
+      } else if (context?.state === 'running' && $('audio-status')?.textContent === '소리 확인 필요') {
+        status('자동 음성 알림 활성', true);
+      }
     } catch (_) {}
   }
+
+  window.addEventListener('pointerdown', unlock, {passive: true});
+  window.addEventListener('keydown', unlock, {passive: true});
 
   function stop() {
     generation++;
@@ -27,7 +44,7 @@
     await unlocked;
     if (token !== generation) return;
     if (!context || context.state !== 'running') {
-      status(`${reason} · 소리만 테스트를 다시 눌러 브라우저 소리 허용 여부를 확인해 주세요.`);
+      status('소리 확인 필요 · 소리 테스트를 눌러 주세요', false);
       return;
     }
     try {
@@ -42,9 +59,9 @@
       tone.connect(gain); gain.connect(context.destination);
       tone.onended = () => { tone.disconnect(); gain.disconnect(); if (oscillator === tone) oscillator = null; };
       tone.start(now); tone.stop(now + .56);
-      status(`${reason} · ${replacement ? '대신 경고음' : '확인음'}을 재생합니다. 자동 알림 ${enabled ? '켜짐' : '꺼짐'}.`);
+      status(`${reason} · ${replacement ? '경고음으로 대체' : '확인음'} 재생`, true);
     } catch (_) {
-      status('소리를 재생하지 못했습니다. 브라우저·기기의 음소거 설정을 확인해 주세요.');
+      status('소리 확인 필요 · 음소거 설정 확인', false);
     }
   }
 
@@ -56,7 +73,7 @@
         const data = await response.arrayBuffer();
         if (!data.byteLength || data.byteLength > 256 * 1024) throw new Error('invalid clip size');
         const clip = await context.decodeAudioData(data);
-        if (!clip.duration || clip.duration > 10) throw new Error('invalid clip duration');
+        if (!clip.duration || !Number.isFinite(clip.duration) || clip.duration > 10) throw new Error('invalid clip duration');
         return clip;
       })().catch(error => { clipPromise = null; throw error; });
     }
@@ -67,14 +84,18 @@
     const fallback = () => {
       if (token !== generation) return;
       stop();
-      chime(generation, '안내형 음성 재생 불가');
+      chime(generation, '안내형 음성 재생 불가', true);
     };
     speechTimer = setTimeout(fallback, 6000);
     try {
       await unlocked;
       if (token !== generation) return;
-      if (!context || context.state !== 'running') throw new Error('audio context unavailable');
-      status(`${purpose} · 자연스러운 음성 준비 중`);
+      if (!context || context.state !== 'running') {
+        clearTimeout(speechTimer);
+        status('소리 확인 필요 · 소리 테스트를 클릭해 주세요', false);
+        return;
+      }
+      status(`${purpose} 준비 중`, true);
       const buffer = await loadClip();
       if (token !== generation) return;
       const source = clipSource = context.createBufferSource();
@@ -86,14 +107,14 @@
         if (clipSource === source) clipSource = null;
         if (token !== generation) return;
         clearTimeout(finishTimer);
-        status(`${purpose} 완료 · 안내형 · 자동 알림 ${enabled ? '켜짐' : '꺼짐'}.`);
+        status(`${purpose} 완료 · 자동 알림 활성`, true);
       };
       clearTimeout(speechTimer);
       finishTimer = setTimeout(() => {
-        if (token === generation) { stop(); status('안내형 재생 시간 초과 · 소리만 테스트로 확인해 주세요.'); }
+        if (token === generation) { stop(); status('소리 확인 필요 · 소리 테스트로 확인', false); }
       }, 15000);
       source.start();
-      status(`${purpose} · 자연스러운 안내형 음성 재생 중`);
+      status(`${purpose} 재생 중`, true);
     } catch (_) { fallback(); }
   }
 
@@ -102,23 +123,9 @@
     naturalSpeech(purpose, generation);
   }
 
-  $('audio-enable').addEventListener('click', () => {
-    enabled = !enabled;
-    $('audio-enable').setAttribute('aria-pressed', String(enabled));
-    $('audio-enable').textContent = enabled ? '음성 알림 끄기' : '음성 알림 켜기';
-    if (enabled) {
-      unlock();
-      stop();
-      chime(generation, '자연스러운 음성 알림 켜짐', false);
-    } else {
-      stop();
-      status('꺼짐 · 자동 음성 알림을 중지했습니다.');
-    }
-  });
-
-  $('audio-test').addEventListener('click', () => {
+  $('audio-test')?.addEventListener('click', () => {
     unlock();
-    speak('소리만 테스트');
+    speak('소리 테스트');
   });
 
   const seen = new Set();

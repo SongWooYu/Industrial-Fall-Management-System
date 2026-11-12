@@ -106,7 +106,7 @@ control_socket = None
 video_sockets = set()
 monitor_sockets = set()
 control_leases = OrderedDict()
-MONITOR_API_KEY = os.environ.get('CAR_MONITOR_KEY', 'edge-monitor-v3-7f9a2c4e8b1d6f3a')
+MONITOR_API_KEY = os.environ.get('CAR_MONITOR_KEY', '').strip()
 MAX_MONITOR_CLIENTS = 4
 
 

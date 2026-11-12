@@ -109,12 +109,13 @@ def main():
         assert page.evaluate('clipCalls.length') == 0, 'Old history must be silent'
         assert page.locator('#audio-voice').count() == 0
         assert page.locator('#audio-volume').count() == 0
+        assert page.locator('#audio-enable').count() == 0
         assert page.locator('#connection-history').count() == 0
+        assert '소리 확인 필요' in page.locator('#audio-status').inner_text()
 
         page.click('#audio-test')
         page.wait_for_function('clipCalls.length === 1')
         assert page.evaluate('clipCalls[0].volume') == 1
-        assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
         assert page.locator('#event-count').inner_text() == '1'
         assert all(method == 'GET' for method, _ in requests), 'Sound test must be read-only'
         page.click('#acknowledge-fall')
@@ -123,10 +124,9 @@ def main():
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'normal'")
         assert not page.locator('#fall-notice').is_visible(), 'Tab acknowledgment survives reload'
         assert page.evaluate('clipCalls.length') == 0
-        page.click('#audio-enable')
-        page.wait_for_function('tones === 1')
-        page.wait_for_timeout(1100)
-        assert page.evaluate('clipCalls.length') == 0, 'Enable must not speak old falls'
+        # Click audio-test to unlock AudioContext for live alert testing
+        page.click('#audio-test')
+        page.wait_for_function('clipCalls.length === 1')
 
         for n, state, kind, caption in [
             (2, 'suspected', 'fall_suspected', '낙상 의심'),
@@ -155,18 +155,22 @@ def main():
                 assert badge.is_hidden(), 'No video card for normal/no-track states'
             if state in ('fallen', 'recovering', 'normal', 'unobserved'):
                 assert page.locator('#fall-notice').is_visible()
-        assert page.evaluate('clipCalls.length') == 1, 'Only the new confirmed event speaks'
+        assert page.evaluate('clipCalls.length') == 2, 'Only the new confirmed event speaks'
+        assert page.locator('#event-count').inner_text() == '2'
+        assert page.locator('#diag-event-count').inner_text() == '4'
         page.wait_for_timeout(2100)
-        assert page.evaluate('clipCalls.length') == 1, 'Repeated polls must not repeat speech'
+        assert page.evaluate('clipCalls.length') == 2, 'Repeated polls must not repeat speech'
         assert page.locator('.state-legend .active').count() == 0
 
         # A transition that clears between polls must still leave a visible record
         # and announce its new confirmation, without mislabelling current state.
         fixture['state'] = 'normal'
         fixture['events'][0:0] = [event(8, 'fall_cleared'), event(7, 'fall_confirmed')]
-        page.wait_for_function('clipCalls.length === 2')
+        page.wait_for_function('clipCalls.length === 3')
         assert page.locator('#video-alarm').is_hidden()
         assert page.locator('#fall-notice').is_visible()
+        assert page.locator('#event-count').inner_text() == '3'
+        assert page.locator('#diag-event-count').inner_text() == '5'
         page.click('#acknowledge-fall')
         fixture['online'] = False
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'offline'")
@@ -182,18 +186,15 @@ def main():
         fixture['events'].insert(0, event(9, 'fall_confirmed'))
         page.wait_for_timeout(1100)
         page.evaluate("Object.defineProperty(document,'hidden',{value:false,configurable:true}); document.dispatchEvent(new Event('visibilitychange'))")
-        page.wait_for_function("document.getElementById('event-count').textContent === '9'")
-        assert page.evaluate('clipCalls.length') == 2
-        page.click('#audio-enable')  # Off.
-        fixture['events'].insert(0, event(10, 'fall_confirmed'))
-        page.wait_for_function("document.getElementById('event-count').textContent === '10'")
-        assert page.evaluate('clipCalls.length') == 2
+        page.wait_for_function("document.getElementById('event-count').textContent === '4'")
+        assert page.evaluate('clipCalls.length') == 3
 
         page.click('#audio-test')
-        page.wait_for_function('clipCalls.length === 3')
+        page.wait_for_function('clipCalls.length === 4')
         assert page.evaluate('clipCalls.at(-1).volume') == 1
         assert page.locator('#audio-volume').count() == 0
         assert page.locator('#audio-voice').count() == 0
+        assert page.locator('#audio-enable').count() == 0
 
         fixture['state'] = 'fallen'
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'fallen'")
@@ -226,7 +227,6 @@ def main():
         assert page.locator('#fall-notice').is_visible()
         assert page.locator('#event-count').inner_text() == '0'
         assert page.evaluate('clipCalls.length') == 0
-        assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
         page.click('#acknowledge-fall')
         assert not page.locator('#fall-notice').is_visible()
         page.click('#audio-test')
@@ -235,7 +235,7 @@ def main():
         assert page.evaluate('audioCalls.length') == 0, 'Natural mode must not use browser TTS'
         page.click('#audio-test')
         page.wait_for_function('clipCalls.length === 2')
-        assert sum(path.endswith('.mp3') for _, path in requests) == 2, 'One cached buffer per page load'
+        assert sum(path.endswith('.mp3') for _, path in requests) == 3, 'One cached buffer per page load'
         # A missing file falls back to Web Audio warning chime.
         fixture['clip_failure'] = True
         page.reload()

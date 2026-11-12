@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>산업안전 낙상관리시스템</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261112-demo2') }}">
-  <script defer src="{{ url_for('static', filename='stream-player.js') }}"></script>
-  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261112-demo2') }}"></script>
-  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261112-demo2') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261112-video-fix') }}">
+  <script defer src="{{ url_for('static', filename='stream-player.js', v='20261112-video-fix') }}"></script>
+  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261112-video-fix') }}"></script>
+  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261112-video-fix') }}"></script>
 </head>
 <body>
   <header>
@@ -42,24 +42,39 @@
         <div aria-live="polite" aria-atomic="true"><span class="eyebrow">낙상 감지 상태</span><h2 id="alarm-title">장비에 연결 중</h2><p id="alarm-detail">카메라와 분석 상태를 확인하고 있습니다.</p></div>
         <div class="update"><span id="connection">대기</span><small id="updated">—</small></div>
       </section>
-      <section class="alert-controls panel" aria-label="브라우저 음성 알림">
-        <div><strong>브라우저 음성 알림 (자연스러운 안내형 음성)</strong><p id="audio-status" role="status">꺼짐 · 이 기기의 스피커에서 재생합니다.</p></div>
-        <div class="tools"><button id="audio-enable" type="button" aria-pressed="false">음성 알림 켜기</button><button id="audio-test" type="button">소리만 테스트</button></div>
-        <p class="audio-note">새 낙상 확정 시 자연스러운 안내 음성으로 알림 · 음량은 접속한 PC/기기의 볼륨으로 조절합니다.</p>
-      </section>
       <section id="fall-notice" class="fall-notice" aria-label="확인하지 않은 낙상 기록" hidden>
         <div><strong>확인이 필요한 낙상 감지 기록</strong><p id="fall-notice-detail"></p><small>현재 상태와 별개로 남는 기록입니다. 추적 종료·회복 동작만으로 사고 해결을 뜻하지 않습니다.</small></div>
         <button id="acknowledge-fall" type="button">기록 확인</button>
       </section>
       <div class="layout">
         <section class="panel monitor">
-          <div class="panel-head"><div><h2>현장 모니터</h2><span class="muted">Dahua · 낙상 감시 구역</span></div><div class="tools"><label class="sr-only" for="stream-mode">영상 모드</label><select id="stream-mode"><option value="auto">원본 영상 · WebRTC 우선</option><option value="overlay">분석 영상 · 박스·관절</option></select><button id="reconnect" type="button">재연결</button></div></div>
+          <div class="panel-head">
+            <div><h2>현장 실시간 모니터</h2><span class="muted">Dahua · 낙상 감시 구역</span></div>
+            <div class="tools">
+              <span id="audio-status" class="audio-pill" role="status">소리 확인 필요</span>
+              <button id="audio-test" type="button">소리 테스트</button>
+              <label class="sr-only" for="stream-mode">영상 모드</label>
+              <select id="stream-mode"><option value="auto">원본 영상 · WebRTC 우선</option><option value="overlay">분석 영상 · 박스·관절</option></select>
+              <button id="reconnect" type="button">재연결</button>
+            </div>
+          </div>
           <div class="video-wrap"><img class="stream" data-camera="dahua" alt="산업 현장 실시간 낙상 감시 영상"><span class="transport-label">영상 연결 중</span><div id="video-alarm" class="video-alarm" data-state="unobserved" role="status" aria-live="polite" aria-atomic="true" hidden><strong id="video-alarm-title"></strong></div></div>
           <div class="state-legend" aria-label="낙상 판정 단계"><span data-stage="normal">관측 중</span><span data-stage="suspected">낙상 의심</span><span data-stage="fallen">낙상 감지</span><span data-stage="recovering">회복 동작</span></div>
-          <div class="metrics"><div><span>추적 중인 사람</span><strong id="people">—</strong></div><div><span>AI 분석 FPS</span><strong id="fps">—</strong></div><div><span>Hailo 추론</span><strong id="inference">—</strong></div><div><span>Pi5 입력 프레임 age</span><strong id="age">—</strong></div></div>
-          <div class="analysis"><div class="analysis-head"><strong id="readiness">분석 상태 확인 중</strong><span id="score">모델 점수 —</span></div><p id="analysis-detail">사람이 보이면 약 3.1초의 움직임을 관측합니다.</p><p class="muted" id="decision">모델 점수만으로 낙상을 확정하지 않습니다.</p><p id="last-transition" class="muted">최근 상태 변화 기록 없음</p></div>
+          <details class="dev-diagnostics">
+            <summary>개발자 진단 지표 보기 (FPS · 추론 시간 · 프레임 지연 · 상세 판정)</summary>
+            <div class="metrics"><div><span>추적 중인 사람</span><strong id="people">—</strong></div><div><span>AI 분석 FPS</span><strong id="fps">—</strong></div><div><span>Hailo 추론</span><strong id="inference">—</strong></div><div><span>Pi5 입력 프레임 age</span><strong id="age">—</strong></div></div>
+            <div class="analysis"><div class="analysis-head"><strong id="readiness">분석 상태 확인 중</strong><span id="score">모델 점수 —</span></div><p id="analysis-detail">사람이 보이면 약 3.1초의 움직임을 관측합니다.</p><p class="muted" id="decision">모델 점수만으로 낙상을 확정하지 않습니다.</p><p id="last-transition" class="muted">최근 상태 변화 기록 없음</p></div>
+          </details>
         </section>
-        <aside class="panel events-panel"><div class="panel-head"><div><h2>감지 기록 · 낙상 캡처 보관함</h2><span class="muted">낙상 발견 시 화면 자동 캡처 · 영구 보관(최근 50건)</span></div><span class="count" id="event-count">0</span></div><div id="events" class="events"><p class="empty">아직 감지 기록이 없습니다.</p></div><p class="storage-note">낙상 확정 순간의 화면(박스·관절 포함)이 디스크에 자동 저장되어 나중에 언제든 다시 확인하고 내려받을 수 있습니다.</p></aside>
+        <aside class="panel events-panel">
+          <div class="panel-head"><div><h2>낙상 사고 기록 · 캡처 보관함</h2><span class="muted">확정 감지 건만 기본 표시 · 사고 캡처 보관</span></div><span class="count" id="event-count">0</span></div>
+          <div id="events" class="events"><p class="empty">아직 확정된 낙상 사고 기록이 없습니다.</p></div>
+          <details id="diag-events-box" class="diag-events-details">
+            <summary>상세 진단 이력 조회 (의심 · 회복 · 추적 종료 <span id="diag-event-count">0</span>건)</summary>
+            <div id="diag-events" class="events diag-events"><p class="empty">상세 진단 이력이 없습니다.</p></div>
+          </details>
+          <p class="storage-note">낙상 확정 건만 기본 표시되며, 의심·회복·추적 종료 기록은 상세 진단 이력에서 조회할 수 있습니다.</p>
+        </aside>
       </div>
     </div>
 

@@ -57,6 +57,8 @@ def register_webrtc_routes(app, history=None):
                 record("whep_accepted", http_status=upstream.status)
                 return response
         except (HTTPError, URLError, TimeoutError, OSError, ValueError) as exc:
+            if request.method == "DELETE" and isinstance(exc, HTTPError) and exc.code == 404:
+                return Response(b"", status=204)
             fields = {"reason": "upstream_unavailable"}
             if isinstance(exc, HTTPError):
                 fields = {"reason": "upstream_http", "http_status": exc.code}

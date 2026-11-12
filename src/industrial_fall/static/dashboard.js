@@ -21,6 +21,7 @@
   }
 
   function switchTab(tab) {
+    if (activeTab === tab) return;
     activeTab = tab;
     const isFall = tab === 'fall';
     if ($('tab-fall')) $('tab-fall').hidden = !isFall;
@@ -33,7 +34,7 @@
       $('tab-btn-robot').classList.toggle('active', !isFall);
       $('tab-btn-robot').setAttribute('aria-selected', String(!isFall));
     }
-    window.dispatchEvent(new Event('online'));
+    window.dispatchEvent(new Event('industrial-tab-changed'));
     if (!isFall) {
       refreshRobotStreamSrc();
       fetchRobot();
@@ -89,11 +90,14 @@
   let eventKey = null;
   function showEvents(events) {
     document.dispatchEvent(new CustomEvent('fall-events-updated', {detail:events}));
+    const visibleEvents = events.filter(event => event.type === 'fall_confirmed');
+    const diagEvents = events.filter(event => event.type !== 'fall_confirmed');
     const key = events.map(e => `${e.id}:${e.snapshot_url || ''}`).join(',');
-    $('event-count').textContent = events.length;
+    $('event-count').textContent = visibleEvents.length;
+    if ($('diag-event-count')) $('diag-event-count').textContent = diagEvents.length;
     if (eventKey === key) return;
     eventKey = key;
-    const confirmed = events.find(e => e.type === 'fall_confirmed');
+    const confirmed = visibleEvents[0];
     if (confirmed && !acknowledged.includes(confirmed.id)) {
       pendingFall = {id:confirmed.id, timestamp:confirmed.timestamp};
       try { sessionStorage.setItem('industrial-pending-fall', JSON.stringify(pendingFall)); } catch (_) {}
@@ -104,11 +108,11 @@
     }
     if (events.length) $('last-transition').textContent = `최근 기록: ${date(events[0].timestamp)} · ${eventTitles[events[0].type] || events[0].type} (현재 판정과 별개)`;
     $('events').replaceChildren();
-    if (!events.length) { const p = document.createElement('p'); p.className='empty'; p.textContent='아직 감지 기록이 없습니다.'; $('events').append(p); }
-    for (const event of events) {
+    if (!visibleEvents.length) { const p = document.createElement('p'); p.className='empty'; p.textContent='아직 확정된 낙상 사고 기록이 없습니다.'; $('events').append(p); }
+    for (const event of visibleEvents) {
       const item = document.createElement('article'); item.className='event'; item.dataset.type=event.type;
       const title = document.createElement('strong'); title.textContent=eventTitles[event.type] || event.type;
-      const time = document.createElement('time'); time.dateTime=event.timestamp; time.textContent=date(event.timestamp);
+      const time = document.createElement('time'); time.dateTime=event.timestamp; time.textContent=`${date(event.timestamp)} · ${event.camera_id || 'Dahua'}`;
       item.append(title,time);
       if (event.track) { const p = document.createElement('p'); p.textContent=`추적 #${event.track.track_id} · 모델 점수 ${(event.track.temporal_probability*100).toFixed(1)}%`; item.append(p); }
       if (event.snapshot_url) {
@@ -121,11 +125,27 @@
         thumb.alt = `${eventTitles[event.type] || event.type} 캡처 미리보기`;
         thumb.loading = 'lazy';
         thumb.addEventListener('click', () => openEvidenceModal(modalTitle, event.snapshot_url, modalDetail, dlName));
-        const button = document.createElement('button'); button.type='button'; button.textContent='낙상 순간 캡처 크게 보기 ↗';
+        const button = document.createElement('button'); button.type='button'; button.textContent='캡처 확인 ↗';
         button.addEventListener('click', () => openEvidenceModal(modalTitle, event.snapshot_url, modalDetail, dlName));
         item.append(thumb, button);
       }
       $('events').append(item);
+    }
+    const diagList = $('diag-events');
+    if (diagList) {
+      diagList.replaceChildren();
+      if (!diagEvents.length) {
+        const p = document.createElement('p'); p.className='empty'; p.textContent='상세 진단 이력이 없습니다.'; diagList.append(p);
+      } else {
+        for (const event of diagEvents) {
+          const item = document.createElement('article'); item.className='event'; item.dataset.type=event.type;
+          const title = document.createElement('strong'); title.textContent=eventTitles[event.type] || event.type;
+          const time = document.createElement('time'); time.dateTime=event.timestamp; time.textContent=date(event.timestamp);
+          item.append(title,time);
+          if (event.track) { const p = document.createElement('p'); p.textContent=`추적 #${event.track.track_id}`; item.append(p); }
+          diagList.append(item);
+        }
+      }
     }
   }
   $('evidence-image').addEventListener('error',()=>{$('evidence-detail').textContent='보관 시간이 지났거나 캡처 파일을 불러올 수 없습니다.';});

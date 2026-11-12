@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+import hmac
 import json
 import logging
 import math
@@ -27,6 +28,8 @@ import cv2
 import numpy as np
 from flask import Response, abort, jsonify, request
 
+from .config import _load_dotenv
+from .request_origin import same_origin_request
 from .robot_vision import ANALYSIS_MODES, ANOMALY_TARGETS, RobotVisionAnalyzer, SimpleWebSocket
 
 LOGGER = logging.getLogger(__name__)
@@ -172,6 +175,7 @@ class RobotMonitor:
         poll_remote: bool = True,
     ):
         self.project_root = Path(project_root)
+        _load_dotenv(self.project_root / ".env")
         self.source_dir = self.project_root / "src/RaspberryPi5_Car/Rasp5Car_source"
         self.pc_code_dir = self.source_dir / "PC_code"
         self.db_path = self.pc_code_dir / "exploration_history.db"
@@ -182,7 +186,7 @@ class RobotMonitor:
         self.port = int(os.environ.get("ROBOT_CAR_PORT", str(port)))
         self.user = os.environ.get("ROBOT_CAR_USER", user)
         self.password = os.environ.get("ROBOT_CAR_PASSWORD", password)
-        self.monitor_key = os.environ.get("CAR_MONITOR_KEY", "edge-monitor-v3-7f9a2c4e8b1d6f3a")
+        self.monitor_key = os.environ.get("CAR_MONITOR_KEY", "").strip()
         self.poll_remote = poll_remote
 
         self._lock = threading.Lock()
@@ -329,6 +333,8 @@ class RobotMonitor:
             stat_ws: SimpleWebSocket | None = None
             vid_ws: SimpleWebSocket | None = None
             try:
+                if not self.monitor_key:
+                    raise RuntimeError("CAR_MONITOR_KEY 환경변수 미설정")
                 auth_headers = {"X-Monitor-Key": self.monitor_key}
                 stat_ws = SimpleWebSocket(
                     self.host,
@@ -647,7 +653,21 @@ def register_robot_routes(app, monitor: RobotMonitor) -> None:
 
     @app.post("/api/robot/config")
     def robot_config():
+        if not same_origin_request():
+            abort(403)
         data = request.get_json(silent=True) or {}
+        admin_token = os.environ.get("ROBOT_ADMIN_TOKEN", "").strip()
+        is_external_tunnel = bool(request.headers.get("Cf-Connecting-Ip"))
+        if admin_token or is_external_tunnel:
+            auth_header = request.headers.get("Authorization", "")
+            bearer = auth_header[7:].strip() if auth_header.startswith("Bearer ") else ""
+            candidate = (
+                request.headers.get("X-Admin-Token")
+                or bearer
+                or str(data.get("admin_token") or "")
+            ).strip()
+            if not admin_token or not candidate or not hmac.compare_digest(candidate, admin_token):
+                return jsonify(error="외부/관리자 설정 변경에는 유효한 관리자 인증 토큰(X-Admin-Token)이 필요합니다."), 403
         mode = data.get("mode")
         stream_enabled = data.get("stream_enabled")
         return jsonify(monitor.configure(mode=mode, stream_enabled=stream_enabled))
