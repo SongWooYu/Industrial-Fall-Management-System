@@ -1,3 +1,4 @@
+import tempfile
 import threading
 import time
 import unittest
@@ -87,12 +88,13 @@ class StandaloneTest(unittest.TestCase):
         self.pipeline.analysis_error = "inference failure"
         self.assertEqual(self.client.get("/health").status_code, 503)
 
-    def test_two_voice_choices_and_static_clip_are_read_only(self):
+    def test_natural_voice_is_single_default_and_static_clip_is_read_only(self):
         html = self.client.get('/').get_data(as_text=True)
-        self.assertIn('id="audio-voice"', html)
-        self.assertIn('value="natural"', html)
-        self.assertIn('value="browser"', html)
+        self.assertNotIn('id="audio-voice"', html)
+        self.assertNotIn('value="browser"', html)
         self.assertNotIn('id="audio-volume"', html)
+        self.assertNotIn('id="connection-history"', html)
+        self.assertIn('id="tab-robot"', html)
         response = self.client.get('/static/audio/fall-detected-ko-sunhi-v1.mp3')
         try:
             self.assertEqual(response.status_code, 200)
@@ -211,6 +213,37 @@ class StandaloneTest(unittest.TestCase):
                 self.pipeline._analysis_loop(estimator, runtime)
         self.assertEqual(self.pipeline.events.recent()[0]["type"], "fall_confirmed")
         self.assertIsNone(self.pipeline.events.recent()[0]["snapshot_url"])
+
+    def test_evidence_and_event_journal_persist_across_restarts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            journal1 = EventJournal(storage_dir=tmpdir)
+            event = journal1.emit("fall_confirmed", track=track("fallen"), snapshot=(b"persisted-jpeg", {"frame_seq": 7}))
+            self.assertTrue(event["snapshot_url"].endswith("/snapshot.jpg"))
+
+            journal2 = EventJournal(storage_dir=tmpdir)
+            restored = journal2.recent()
+            self.assertEqual(len(restored), 1)
+            self.assertEqual(restored[0]["id"], event["id"])
+            self.assertEqual(restored[0]["snapshot_url"], event["snapshot_url"])
+            self.assertEqual(journal2.evidence.get(event["id"]), b"persisted-jpeg")
+
+    def test_robot_monitor_routes_are_read_only(self):
+        response = self.client.get("/api/robot/status")
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIn("robot", payload)
+        self.assertIn("inspection", payload)
+        records = payload["inspection"]["records"]
+        self.assertGreaterEqual(len(records), 1)
+        first = records[0]
+        if first["overview_url"]:
+            img_resp = self.client.get(first["overview_url"])
+            try:
+                self.assertEqual(img_resp.status_code, 200)
+                self.assertEqual(img_resp.mimetype, "image/jpeg")
+                self.assertGreater(len(img_resp.data), 1000)
+            finally:
+                img_resp.close()
 
 
 if __name__ == "__main__":

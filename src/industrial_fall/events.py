@@ -1,18 +1,54 @@
-"""Local-only, bounded event journal. No broker, database, or remote service."""
+"""Local-only, bounded event journal with optional local disk persistence for snapshots."""
 from collections import deque, OrderedDict
 from copy import deepcopy
 from datetime import datetime, timezone
+import json
+from pathlib import Path
 import threading
 import uuid
 
-from .evidence import EvidenceStore
+from .evidence import EVENT_ID, EvidenceStore
 
 
 class EventJournal:
-    def __init__(self, limit=50):
+    def __init__(self, limit=50, storage_dir=None):
+        self.limit = limit
         self._events = deque(maxlen=limit)
         self._lock = threading.Lock()
-        self.evidence = EvidenceStore(limit=limit)
+        self.storage_dir = Path(storage_dir) if storage_dir else None
+        ttl = 86400 * 30 if self.storage_dir is not None else 3600
+        self.evidence = EvidenceStore(limit=limit, ttl=ttl, storage_dir=self.storage_dir)
+        if self.storage_dir is not None:
+            self._restore()
+
+    def _restore(self):
+        try:
+            index_file = self.storage_dir / "events.json"
+            if not index_file.is_file():
+                return
+            rows = json.loads(index_file.read_text(encoding="utf-8"))
+            if not isinstance(rows, list):
+                return
+            for row in reversed(rows[:self.limit]):
+                if not isinstance(row, dict) or not EVENT_ID.fullmatch(str(row.get("id", ""))):
+                    continue
+                if row.get("snapshot_url") and self.evidence.get(row["id"]) is None:
+                    row["snapshot_url"] = None
+                self._events.appendleft(row)
+        except Exception:
+            pass
+
+    def _persist(self):
+        if self.storage_dir is None:
+            return
+        try:
+            self.storage_dir.mkdir(parents=True, exist_ok=True)
+            tmp = self.storage_dir / "events.json.tmp"
+            target = self.storage_dir / "events.json"
+            tmp.write_text(json.dumps(list(self._events), ensure_ascii=False), encoding="utf-8")
+            tmp.replace(target)
+        except OSError:
+            pass
 
     def emit(self, kind, *, track=None, reason=None, snapshot=None):
         event = {"id": uuid.uuid4().hex, "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -25,6 +61,7 @@ class EventJournal:
                 event["snapshot"] = metadata
         with self._lock:
             self._events.appendleft(event)
+            self._persist()
         return event
 
     def recent(self):

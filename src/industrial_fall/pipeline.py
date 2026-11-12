@@ -49,9 +49,9 @@ def render_packet(packet, state, *, evidence=False):
 
 
 class FallPipeline:
-    def __init__(self, config):
+    def __init__(self, config, evidence_dir=None):
         self.config = config
-        self.events = EventJournal(limit=50)
+        self.events = EventJournal(limit=50, storage_dir=evidence_dir)
         self.transitions = FallTransitions()
         self.lock = threading.RLock()
         self.stop_event = threading.Event()

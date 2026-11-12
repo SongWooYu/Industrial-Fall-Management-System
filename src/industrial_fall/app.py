@@ -11,15 +11,19 @@ from .connection_history import ConnectionHistory, access_scope, connection_id
 from .evidence import EVENT_ID
 from .pipeline import FallPipeline
 from .request_origin import same_origin_request
+from .robot_monitor import RobotMonitor, register_robot_routes
 from .webrtc import register_webrtc_routes
 
 
-def create_app(pipeline, connection_history=None):
+def create_app(pipeline, connection_history=None, robot_monitor=None):
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 131072
     history = connection_history if connection_history is not None else ConnectionHistory()
+    robot = robot_monitor if robot_monitor is not None else RobotMonitor(Path(__file__).resolve().parents[2], poll_remote=False)
     app.extensions["connection_history"] = history
+    app.extensions["robot_monitor"] = robot
     register_webrtc_routes(app, history)
+    register_robot_routes(app, robot)
 
     @app.route("/api/video-connections", methods=["GET", "POST"])
     def video_connections():
@@ -123,9 +127,11 @@ def main():
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     logging.getLogger("werkzeug").setLevel(logging.WARNING)
     config = load_config(args.config)
-    pipeline = FallPipeline(config)
-    history = ConnectionHistory(Path(config["project_root"]) / "runtime/logs/video-connections.jsonl")
-    app = create_app(pipeline, history)
+    root = Path(config["project_root"])
+    pipeline = FallPipeline(config, evidence_dir=root / "runtime/evidence")
+    history = ConnectionHistory(root / "runtime/logs/video-connections.jsonl")
+    robot = RobotMonitor(root, poll_remote=True)
+    app = create_app(pipeline, history, robot)
 
     def shutdown(_sig, _frame):
         raise KeyboardInterrupt

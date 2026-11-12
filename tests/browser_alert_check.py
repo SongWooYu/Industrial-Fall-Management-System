@@ -106,13 +106,14 @@ def main():
         assert page.locator('#video-alarm').is_hidden(), 'Normal must not cover the image'
         assert page.locator('#video-alarm-title').text_content() == ''
         assert page.locator('#fall-notice').is_visible()
-        assert page.evaluate('audioCalls.length') == 0, 'Old history must be silent'
-        assert page.locator('#audio-voice').input_value() == 'natural'
-        page.select_option('#audio-voice', 'browser')
+        assert page.evaluate('clipCalls.length') == 0, 'Old history must be silent'
+        assert page.locator('#audio-voice').count() == 0
+        assert page.locator('#audio-volume').count() == 0
+        assert page.locator('#connection-history').count() == 0
 
         page.click('#audio-test')
-        page.wait_for_function('audioCalls.length === 1')
-        assert page.evaluate('audioCalls[0].text') == '낙상이 감지되었습니다.'
+        page.wait_for_function('clipCalls.length === 1')
+        assert page.evaluate('clipCalls[0].volume') == 1
         assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
         assert page.locator('#event-count').inner_text() == '1'
         assert all(method == 'GET' for method, _ in requests), 'Sound test must be read-only'
@@ -121,12 +122,11 @@ def main():
         page.reload()
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'normal'")
         assert not page.locator('#fall-notice').is_visible(), 'Tab acknowledgment survives reload'
-        assert page.evaluate('audioCalls.length') == 0
-        assert page.locator('#audio-voice').input_value() == 'browser'
+        assert page.evaluate('clipCalls.length') == 0
         page.click('#audio-enable')
-        page.wait_for_function('audioCalls.length === 1')
+        page.wait_for_function('tones === 1')
         page.wait_for_timeout(1100)
-        assert page.evaluate('audioCalls.length') == 1, 'Enable must not speak old falls'
+        assert page.evaluate('clipCalls.length') == 0, 'Enable must not speak old falls'
 
         for n, state, kind, caption in [
             (2, 'suspected', 'fall_suspected', '낙상 의심'),
@@ -155,16 +155,16 @@ def main():
                 assert badge.is_hidden(), 'No video card for normal/no-track states'
             if state in ('fallen', 'recovering', 'normal', 'unobserved'):
                 assert page.locator('#fall-notice').is_visible()
-        assert page.evaluate('audioCalls.length') == 2, 'Only the new confirmed event speaks'
+        assert page.evaluate('clipCalls.length') == 1, 'Only the new confirmed event speaks'
         page.wait_for_timeout(2100)
-        assert page.evaluate('audioCalls.length') == 2, 'Repeated polls must not repeat speech'
+        assert page.evaluate('clipCalls.length') == 1, 'Repeated polls must not repeat speech'
         assert page.locator('.state-legend .active').count() == 0
 
         # A transition that clears between polls must still leave a visible record
         # and announce its new confirmation, without mislabelling current state.
         fixture['state'] = 'normal'
         fixture['events'][0:0] = [event(8, 'fall_cleared'), event(7, 'fall_confirmed')]
-        page.wait_for_function('audioCalls.length === 3')
+        page.wait_for_function('clipCalls.length === 2')
         assert page.locator('#video-alarm').is_hidden()
         assert page.locator('#fall-notice').is_visible()
         page.click('#acknowledge-fall')
@@ -183,27 +183,17 @@ def main():
         page.wait_for_timeout(1100)
         page.evaluate("Object.defineProperty(document,'hidden',{value:false,configurable:true}); document.dispatchEvent(new Event('visibilitychange'))")
         page.wait_for_function("document.getElementById('event-count').textContent === '9'")
-        assert page.evaluate('audioCalls.length') == 3
+        assert page.evaluate('clipCalls.length') == 2
         page.click('#audio-enable')  # Off.
         fixture['events'].insert(0, event(10, 'fall_confirmed'))
         page.wait_for_function("document.getElementById('event-count').textContent === '10'")
-        assert page.evaluate('audioCalls.length') == 3
+        assert page.evaluate('clipCalls.length') == 2
 
         page.click('#audio-test')
-        assert page.evaluate('audioCalls.at(-1).volume') == 1
+        page.wait_for_function('clipCalls.length === 3')
+        assert page.evaluate('clipCalls.at(-1).volume') == 1
         assert page.locator('#audio-volume').count() == 0
-        page.evaluate('window.voices=[]')
-        page.click('#audio-test')
-        page.wait_for_function('tones === 1')
-        assert '한국어 음성' in page.locator('#audio-status').inner_text()
-        page.evaluate("window.voices=[{name:'Korean test voice',lang:'ko-KR',localService:true}];window.speechFailure=true")
-        page.click('#audio-test')
-        page.wait_for_function('tones === 2')
-        assert '음성 재생 실패' in page.locator('#audio-status').inner_text()
-        page.evaluate('window.speechFailure=false;window.speechHang=true')
-        page.click('#audio-test')
-        page.wait_for_function('tones === 3', timeout=6000)
-        assert '응답 없음' in page.locator('#audio-status').inner_text()
+        assert page.locator('#audio-voice').count() == 0
 
         fixture['state'] = 'fallen'
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'fallen'")
@@ -235,64 +225,27 @@ def main():
         page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
         assert page.locator('#fall-notice').is_visible()
         assert page.locator('#event-count').inner_text() == '0'
-        assert page.evaluate('audioCalls.length') == 0
+        assert page.evaluate('clipCalls.length') == 0
         assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
         page.click('#acknowledge-fall')
         assert not page.locator('#fall-notice').is_visible()
-        page.select_option('#audio-voice', 'natural')
-        assert page.evaluate('clipCalls.length') == 0, 'Selecting a voice is silent'
-        assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
         page.click('#audio-test')
         page.wait_for_function('clipCalls.length === 1')
         assert page.evaluate('clipCalls[0].volume') == 1
         assert page.evaluate('audioCalls.length') == 0, 'Natural mode must not use browser TTS'
         page.click('#audio-test')
         page.wait_for_function('clipCalls.length === 2')
-        assert sum(path.endswith('.mp3') for _, path in requests) == 1, 'Reuse one cached buffer'
-        page.reload()
-        page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
-        assert page.locator('#audio-voice').input_value() == 'natural'
-        assert page.evaluate('clipCalls.length') == 0
-        page.click('#audio-enable')
-        page.wait_for_function('tones === 1')
-        assert page.evaluate('clipCalls.length') == 0, 'Enabling is not a fall announcement'
-        fixture['events'].insert(0, event(11, 'fall_confirmed'))
-        page.wait_for_function('clipCalls.length === 1')
-        page.wait_for_timeout(1100)
-        assert page.evaluate('clipCalls.length') == 1, 'Natural alerts are deduplicated too'
-        page.click('#audio-enable')
-        # A retired saved voice migrates silently to the supported default.
-        page.evaluate("localStorage.setItem('industrial-voice-mode', 'espeak')")
-        page.reload()
-        page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
-        assert page.locator('#audio-voice option').count() == 2
-        assert page.locator('#audio-voice').input_value() == 'natural'
-        assert page.evaluate("localStorage.getItem('industrial-voice-mode')") == 'natural'
-        assert page.evaluate('audioCalls.length + clipCalls.length + tones') == 0
-        assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
-        assert not any('espeak' in path for _, path in requests)
-        # A missing file is reported and the original voice still works.
+        assert sum(path.endswith('.mp3') for _, path in requests) == 2, 'One cached buffer per page load'
+        # A missing file falls back to Web Audio warning chime.
         fixture['clip_failure'] = True
         page.reload()
         page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
         page.click('#audio-test')
-        page.wait_for_function('audioCalls.length === 1')
-        assert '기존 음성으로 대체' in page.locator('#audio-status').inner_text()
+        page.wait_for_function('tones === 1')
+        assert '경고음으로 대체' in page.locator('#audio-status').inner_text()
         fixture['clip_failure'] = False
         page.click('#audio-test')
         page.wait_for_function('clipCalls.length === 1')
-        # Cancel an in-flight decode by changing voice: it must not play later.
-        page.reload()
-        page.wait_for_function("document.getElementById('alarm-title').textContent === '판정 대상 없음'")
-        page.evaluate('window.clipDecodeHang=true')
-        page.click('#audio-test')
-        page.select_option('#audio-voice', 'browser')
-        page.wait_for_timeout(6200)
-        assert page.evaluate('audioCalls.length + clipCalls.length') == 0
-        page.select_option('#audio-voice', 'natural')
-        page.click('#audio-test')
-        page.wait_for_function('audioCalls.length === 1', timeout=8000)
-        assert '기존 음성으로 대체' in page.locator('#audio-status').inner_text()
         assert all(method == 'GET' for method, _ in requests)
         assert not errors, errors
         context.close()
@@ -304,13 +257,12 @@ def main():
         page.on('pageerror', lambda error: errors.append(str(error)))
         page.goto('http://industrial.test/')
         page.click('#audio-test')
-        page.wait_for_function("document.getElementById('audio-status').textContent.includes('완료 · 안내형')", timeout=10000)
+        page.wait_for_function("document.getElementById('audio-status').textContent.includes('완료')", timeout=10000)
         assert not errors, errors
         real.close()
         browser.close()
     print('Browser alerts: states, persistent notice/ack, silent baseline, dedup, read-only sound test,')
-    print('volume, muted/hidden tabs, unavailable/error/hung speech fallback and responsive layout PASS.')
-    print('Two voices: preference, MP3 playback/cache, automatic alert, failure fallback, cancellation PASS.')
+    print('natural voice default, chime fallback and responsive layout PASS.')
     print('Real Chromium MP3 decode/playback PASS (physical output muted).')
 
 

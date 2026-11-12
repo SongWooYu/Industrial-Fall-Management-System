@@ -3,48 +3,110 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>산업안전 낙상관리시스템</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261112-no-volume') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261112-demo1') }}">
   <script defer src="{{ url_for('static', filename='stream-player.js') }}"></script>
-  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261112-no-volume') }}"></script>
-  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261029-alerts2') }}"></script>
-  <script defer src="{{ url_for('static', filename='connection-history.js', v='20261029-all-transports') }}"></script>
+  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261112-demo1') }}"></script>
+  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261112-demo1') }}"></script>
 </head>
 <body>
-  <header><div><div class="eyebrow">INDUSTRIAL SAFETY · VISION</div><h1>산업안전 낙상관리시스템</h1></div>
-    <div class="tools"><span class="node">Pi5 · Hailo-8</span><label class="sr-only" for="theme">화면 테마</label><select id="theme"><option value="system">시스템 테마</option><option value="light">밝게</option><option value="dark">어둡게</option></select></div>
+  <header>
+    <div><div class="eyebrow">INDUSTRIAL SAFETY · VISION &amp; ROBOTICS</div><h1>산업안전 낙상 · 탐사로봇 통합 관제시스템</h1></div>
+    <div class="tools">
+      <nav class="view-tabs" aria-label="관제 화면 전환">
+        <button id="tab-btn-fall" type="button" class="tab-btn active" aria-selected="true">현장 낙상 관제</button>
+        <button id="tab-btn-robot" type="button" class="tab-btn" aria-selected="false">안전탐색 로봇 · 환경 분석</button>
+      </nav>
+      <span class="node">Pi5 · Hailo-8</span>
+      <label class="sr-only" for="theme">화면 테마</label>
+      <select id="theme"><option value="system">시스템 테마</option><option value="light">밝게</option><option value="dark">어둡게</option></select>
+    </div>
   </header>
   <main>
-    <section id="alarm" class="alarm" data-state="unobserved">
-      <div aria-live="polite" aria-atomic="true"><span class="eyebrow">낙상 감지 상태</span><h2 id="alarm-title">장비에 연결 중</h2><p id="alarm-detail">카메라와 분석 상태를 확인하고 있습니다.</p></div>
-      <div class="update"><span id="connection">대기</span><small id="updated">—</small></div>
-    </section>
-    <section class="alert-controls panel" aria-label="브라우저 음성 알림">
-      <div><strong>브라우저 음성 알림</strong><p id="audio-status" role="status">꺼짐 · 이 기기의 스피커에서 재생합니다.</p></div>
-      <div class="tools"><label class="sr-only" for="audio-voice">알림 목소리</label><select id="audio-voice"><option value="natural">자연스러운 음성 · 안내형</option><option value="browser">기존 음성 · 브라우저 TTS</option></select><button id="audio-enable" type="button" aria-pressed="false">음성 알림 켜기</button><button id="audio-test" type="button">소리만 테스트</button></div>
-      <p class="audio-note">새 낙상 확정 시 음성 안내 · 테스트는 감지 기록을 만들지 않습니다. 새로고침 후에는 다시 켜 주세요. 탭 종료·절전·백그라운드에서는 알림이 보장되지 않습니다.</p>
-    </section>
-    <section id="fall-notice" class="fall-notice" aria-label="확인하지 않은 낙상 기록" hidden>
-      <div><strong>확인이 필요한 낙상 감지 기록</strong><p id="fall-notice-detail"></p><small>현재 상태와 별개로 남는 기록입니다. 추적 종료·회복 동작만으로 사고 해결을 뜻하지 않습니다.</small></div>
-      <button id="acknowledge-fall" type="button">기록 확인</button>
-    </section>
-    <div class="layout">
-      <section class="panel monitor">
-        <div class="panel-head"><div><h2>현장 모니터</h2><span class="muted">Dahua · 낙상 감시 구역</span></div><div class="tools"><label class="sr-only" for="stream-mode">영상 모드</label><select id="stream-mode"><option value="auto">원본 영상 · WebRTC 우선</option><option value="overlay">분석 영상 · 박스·관절</option></select><button id="reconnect" type="button">재연결</button></div></div>
-        <div class="video-wrap"><img class="stream" data-camera="dahua" alt="산업 현장 실시간 낙상 감시 영상"><span class="transport-label">영상 연결 중</span><div id="video-alarm" class="video-alarm" data-state="unobserved" role="status" aria-live="polite" aria-atomic="true" hidden><strong id="video-alarm-title"></strong></div></div>
-        <div class="state-legend" aria-label="낙상 판정 단계"><span data-stage="normal">관측 중</span><span data-stage="suspected">낙상 의심</span><span data-stage="fallen">낙상 감지</span><span data-stage="recovering">회복 동작</span></div>
-        <div class="metrics"><div><span>추적 중인 사람</span><strong id="people">—</strong></div><div><span>AI 분석 FPS</span><strong id="fps">—</strong></div><div><span>Hailo 추론</span><strong id="inference">—</strong></div><div><span>Pi5 입력 프레임 age</span><strong id="age">—</strong></div></div>
-        <div class="analysis"><div class="analysis-head"><strong id="readiness">분석 상태 확인 중</strong><span id="score">모델 점수 —</span></div><p id="analysis-detail">사람이 보이면 약 3.1초의 움직임을 관측합니다.</p><p class="muted" id="decision">모델 점수만으로 낙상을 확정하지 않습니다.</p><p id="last-transition" class="muted">최근 상태 변화 기록 없음</p></div>
+    <div id="tab-fall">
+      <section id="alarm" class="alarm" data-state="unobserved">
+        <div aria-live="polite" aria-atomic="true"><span class="eyebrow">낙상 감지 상태</span><h2 id="alarm-title">장비에 연결 중</h2><p id="alarm-detail">카메라와 분석 상태를 확인하고 있습니다.</p></div>
+        <div class="update"><span id="connection">대기</span><small id="updated">—</small></div>
       </section>
-      <aside class="panel events-panel"><div class="panel-head"><div><h2>감지 기록</h2><span class="muted">최근 50개 · Pi5 로컬 보관</span></div><span class="count" id="event-count">0</span></div><div id="events" class="events"><p class="empty">아직 감지 기록이 없습니다.</p></div><p class="storage-note">캡처는 최대 50장·1시간 보관됩니다. 재시작 시 기록은 초기화됩니다.</p></aside>
+      <section class="alert-controls panel" aria-label="브라우저 음성 알림">
+        <div><strong>브라우저 음성 알림 (자연스러운 안내형 음성)</strong><p id="audio-status" role="status">꺼짐 · 이 기기의 스피커에서 재생합니다.</p></div>
+        <div class="tools"><button id="audio-enable" type="button" aria-pressed="false">음성 알림 켜기</button><button id="audio-test" type="button">소리만 테스트</button></div>
+        <p class="audio-note">새 낙상 확정 시 자연스러운 안내 음성으로 알림 · 음량은 접속한 PC/기기의 볼륨으로 조절합니다.</p>
+      </section>
+      <section id="fall-notice" class="fall-notice" aria-label="확인하지 않은 낙상 기록" hidden>
+        <div><strong>확인이 필요한 낙상 감지 기록</strong><p id="fall-notice-detail"></p><small>현재 상태와 별개로 남는 기록입니다. 추적 종료·회복 동작만으로 사고 해결을 뜻하지 않습니다.</small></div>
+        <button id="acknowledge-fall" type="button">기록 확인</button>
+      </section>
+      <div class="layout">
+        <section class="panel monitor">
+          <div class="panel-head"><div><h2>현장 모니터</h2><span class="muted">Dahua · 낙상 감시 구역</span></div><div class="tools"><label class="sr-only" for="stream-mode">영상 모드</label><select id="stream-mode"><option value="auto">원본 영상 · WebRTC 우선</option><option value="overlay">분석 영상 · 박스·관절</option></select><button id="reconnect" type="button">재연결</button></div></div>
+          <div class="video-wrap"><img class="stream" data-camera="dahua" alt="산업 현장 실시간 낙상 감시 영상"><span class="transport-label">영상 연결 중</span><div id="video-alarm" class="video-alarm" data-state="unobserved" role="status" aria-live="polite" aria-atomic="true" hidden><strong id="video-alarm-title"></strong></div></div>
+          <div class="state-legend" aria-label="낙상 판정 단계"><span data-stage="normal">관측 중</span><span data-stage="suspected">낙상 의심</span><span data-stage="fallen">낙상 감지</span><span data-stage="recovering">회복 동작</span></div>
+          <div class="metrics"><div><span>추적 중인 사람</span><strong id="people">—</strong></div><div><span>AI 분석 FPS</span><strong id="fps">—</strong></div><div><span>Hailo 추론</span><strong id="inference">—</strong></div><div><span>Pi5 입력 프레임 age</span><strong id="age">—</strong></div></div>
+          <div class="analysis"><div class="analysis-head"><strong id="readiness">분석 상태 확인 중</strong><span id="score">모델 점수 —</span></div><p id="analysis-detail">사람이 보이면 약 3.1초의 움직임을 관측합니다.</p><p class="muted" id="decision">모델 점수만으로 낙상을 확정하지 않습니다.</p><p id="last-transition" class="muted">최근 상태 변화 기록 없음</p></div>
+        </section>
+        <aside class="panel events-panel"><div class="panel-head"><div><h2>감지 기록 · 낙상 캡처 보관함</h2><span class="muted">낙상 발견 시 화면 자동 캡처 · 영구 보관(최근 50건)</span></div><span class="count" id="event-count">0</span></div><div id="events" class="events"><p class="empty">아직 감지 기록이 없습니다.</p></div><p class="storage-note">낙상 확정 순간의 화면(박스·관절 포함)이 디스크에 자동 저장되어 나중에 언제든 다시 확인하고 내려받을 수 있습니다.</p></aside>
+      </div>
     </div>
-    <details class="panel connection-panel" id="connection-history" open>
-      <summary>영상 연결 이력 <span id="video-log-summary" class="muted">기록 확인 중</span></summary>
-      <div class="connection-tools"><label for="video-log-filter">표시할 연결 <select id="video-log-filter"><option value="all">전체 · WebRTC + MJPEG</option><option value="webrtc">WebRTC</option><option value="mjpeg">MJPEG</option><option value="failed">실패·대체</option></select></label><span id="video-log-health" class="muted"></span></div>
-      <div id="video-log-events" class="connection-events"><p class="empty">아직 연결 기록이 없습니다.</p></div>
-      <p class="storage-note">WebRTC·MJPEG 모두 기록 · 최근 200건 · 최대 약 6MB 순환 저장 · 재시작 후 복원. 필터는 표시만 바꾸며, 영상 녹화가 아닌 연결 정보입니다.<br>‘도메인 URL’ 접속도 같은 LAN일 수 있습니다. WHEP 응답 성공과 실제 WebRTC 영상 수신은 구분합니다.</p>
-    </details>
-    <footer><span>Hailo YOLOv8s-Pose + EdgeFall · 단독 실행</span><span>개발·시연용 POC — 인증된 산업 안전 장치가 아닙니다.</span></footer>
+
+    <div id="tab-robot" hidden>
+      <section id="robot-banner" class="alarm" data-state="normal">
+        <div>
+          <span class="eyebrow">SAFETY EXPLORATION ROBOT · READ-ONLY TELEMETRY</span>
+          <h2 id="robot-status-title">안전탐색 원격로봇 상태 확인 중</h2>
+          <p id="robot-status-detail">원격 로봇(192.168.1.206)의 주행·센서 상태와 현장 안전/결함 탐사 분석 결과를 조회합니다. (관제 전용 · 조종 간섭 없음)</p>
+        </div>
+        <div class="update">
+          <span id="robot-connection">연결 확인 중</span>
+          <small id="robot-updated">—</small>
+        </div>
+      </section>
+
+      <section class="panel robot-telemetry-panel">
+        <div class="panel-head">
+          <div><h2>원격 로봇 실시간 상태 (192.168.1.206)</h2><span class="muted">메카넘휠 주행 상태 · 초음파 전방 감시 · 하드웨어 진단</span></div>
+          <span class="node" id="robot-pc-badge">조종 PC 미연결</span>
+        </div>
+        <div class="metrics">
+          <div><span>현재 주행 방향</span><strong id="robot-direction">—</strong></div>
+          <div><span>모터 출력 (PWM)</span><strong id="robot-pwm">—</strong></div>
+          <div><span>전방 초음파 거리</span><strong id="robot-distance">—</strong></div>
+          <div><span>장비 루프 / 센서 상태</span><strong id="robot-health">—</strong></div>
+        </div>
+      </section>
+
+      <div class="layout robot-layout">
+        <section class="panel robot-detail-panel">
+          <div class="panel-head">
+            <div><h2>탐사 환경 · 안전 분석 상세 확인</h2><span class="muted" id="robot-selected-meta">우측 탐사 기록을 선택하면 전체 화면과 부분 확대 분석 사진을 함께 표시합니다.</span></div>
+            <span class="count" id="robot-selected-badge">대기</span>
+          </div>
+          <div class="robot-summary-bar" id="robot-item-breakdown"></div>
+          <div class="robot-photo-grid">
+            <figure class="robot-figure">
+              <figcaption>현장 전체 캡처 (Overview)</figcaption>
+              <img id="robot-overview-img" alt="탐사 로봇 현장 전체 캡처" hidden>
+              <p id="robot-overview-empty" class="empty">탐사 기록을 선택해 주세요.</p>
+            </figure>
+            <figure class="robot-figure">
+              <figcaption>탐지 대상 · 결함 확대 (Cropped Detail)</figcaption>
+              <img id="robot-detail-img" alt="탐사 로봇 탐지 대상 확대 캡처" hidden>
+              <p id="robot-detail-empty" class="empty">탐사 기록을 선택해 주세요.</p>
+            </figure>
+          </div>
+        </section>
+        <aside class="panel events-panel">
+          <div class="panel-head">
+            <div><h2>로봇 탐사 · AI 분석 이력</h2><span class="muted" id="robot-stats-text">건축 결함 · 안전모 미착용 · 작업자 탐지</span></div>
+            <span class="count" id="robot-record-count">0</span>
+          </div>
+          <div id="robot-records" class="events"><p class="empty">탐사 이력을 불러오는 중입니다.</p></div>
+          <p class="storage-note">원격 로봇 클라이언트가 분석·승인한 안전모 미착용, 노출 철근, 벽면 균열, 작업자 발견 기록과 원본/확대 캡처입니다.</p>
+        </aside>
+      </div>
+    </div>
+
+    <footer><span>Hailo YOLOv8s-Pose + EdgeFall &amp; Safety Exploration Robot Monitor</span><span>산업 현장 낙상 감지 및 안전탐색 로봇 통합 관제</span></footer>
   </main>
-  <dialog id="evidence"><div class="panel-head"><h2 id="evidence-title">낙상 순간 캡처</h2><button id="close-evidence" type="button" aria-label="캡처 닫기">닫기 ×</button></div><img id="evidence-image" alt="낙상 감지 순간의 박스와 관절 캡처"><p id="evidence-detail"></p></dialog>
+  <dialog id="evidence"><div class="panel-head"><h2 id="evidence-title">낙상 순간 캡처</h2><div class="tools"><a id="download-evidence" class="btn-link" href="#" download="fall-capture.jpg">이미지 저장 ↓</a><button id="close-evidence" type="button" aria-label="캡처 닫기">닫기 ×</button></div></div><img id="evidence-image" alt="낙상 감지 순간의 박스와 관절 캡처"><p id="evidence-detail"></p></dialog>
 </body>
 </html>

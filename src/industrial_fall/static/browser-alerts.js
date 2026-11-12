@@ -1,28 +1,13 @@
-/* Browser-only speech: no server commands, event injection or audio uploads. */
+/* Browser-only natural speech alert: fixed SunHiNeural MP3 clip, client OS volume. */
 (() => {
   'use strict';
   const $ = id => document.getElementById(id);
-  const synth = window.speechSynthesis;
-  const selector = $('audio-voice');
   const naturalUrl = '/static/audio/fall-detected-ko-sunhi-v1.mp3';
-  try {
-    const saved = localStorage.getItem('industrial-voice-mode');
-    selector.value = saved === 'browser' ? 'browser' : 'natural';
-    // Retired/unknown choices return to the default without playing audio.
-    if (saved && saved !== selector.value) localStorage.setItem('industrial-voice-mode', selector.value);
-  } catch (_) {}
-  let enabled = false, generation = 0, speechTimer, finishTimer, utterance;
-  let context, oscillator, voice, unlocked = Promise.resolve();
+  let enabled = false, generation = 0, speechTimer, finishTimer;
+  let context, oscillator, unlocked = Promise.resolve();
   let clipSource, clipPromise;
   const status = text => { $('audio-status').textContent = text; };
-  function loadVoice() {
-    const voices = synth?.getVoices() || [];
-    voice = voices.find(v => /^ko([_-]|$)/i.test(v.lang) && v.localService)
-      || voices.find(v => /^ko([_-]|$)/i.test(v.lang));
-  }
-  loadVoice();
-  synth?.addEventListener('voiceschanged', loadVoice);
-  // Create/resume only in a click handler. Reuse one context; never queue tones.
+
   function unlock() {
     const Audio = window.AudioContext || window.webkitAudioContext;
     try {
@@ -30,14 +15,14 @@
       if (context?.state === 'suspended') unlocked = context.resume().catch(() => {});
     } catch (_) {}
   }
+
   function stop() {
     generation++;
     clearTimeout(speechTimer); clearTimeout(finishTimer);
-    utterance = null;
-    synth?.cancel();
     if (oscillator) { try { oscillator.stop(); } catch (_) {} oscillator = null; }
     if (clipSource) { try { clipSource.stop(); } catch (_) {} clipSource = null; }
   }
+
   async function chime(token, reason, replacement = true) {
     await unlocked;
     if (token !== generation) return;
@@ -58,41 +43,15 @@
       tone.onended = () => { tone.disconnect(); gain.disconnect(); if (oscillator === tone) oscillator = null; };
       tone.start(now); tone.stop(now + .56);
       status(`${reason} · ${replacement ? '대신 경고음' : '확인음'}을 재생합니다. 자동 알림 ${enabled ? '켜짐' : '꺼짐'}.`);
-    } catch (_) { status('소리를 재생하지 못했습니다. 브라우저·기기의 음소거 설정을 확인해 주세요.'); }
-  }
-  function browserSpeech(text, purpose, token, fallback = '') {
-    loadVoice();
-    if (!synth || !window.SpeechSynthesisUtterance || !voice) {
-      chime(token, '한국어 음성을 사용할 수 없음'); return;
+    } catch (_) {
+      status('소리를 재생하지 못했습니다. 브라우저·기기의 음소거 설정을 확인해 주세요.');
     }
-    try {
-      const speech = utterance = new SpeechSynthesisUtterance(text);
-      speech.voice = voice; speech.lang = 'ko-KR'; speech.rate = 1; speech.volume = 1;
-      speech.onstart = () => {
-        if (token !== generation) return;
-        clearTimeout(speechTimer);
-        status(`${fallback}${purpose} · ${voice.name} · 기기 음량도 확인해 주세요.`);
-      };
-      speech.onend = () => {
-        if (token !== generation) return;
-        clearTimeout(speechTimer); clearTimeout(finishTimer); utterance = null;
-        status(`${fallback}${purpose} 완료 · 자동 알림 ${enabled ? '켜짐' : '꺼짐'}.`);
-      };
-      speech.onerror = event => {
-        if (token !== generation || ['canceled', 'interrupted'].includes(event.error)) return;
-        stop(); chime(generation, '음성 재생 실패');
-      };
-      // Engines can silently fail or hang. One active request, bounded lifetime.
-      speechTimer = setTimeout(() => { if (token === generation) { stop(); chime(generation, '음성 시작 응답 없음'); } }, 4000);
-      finishTimer = setTimeout(() => { if (token === generation) { stop(); status('음성 재생 시간 초과 · 소리만 테스트로 확인해 주세요.'); } }, 15000);
-      synth.speak(speech);
-    } catch (_) { stop(); chime(generation, '음성 기능 사용 불가'); }
   }
+
   function loadClip() {
-    // One short, same-origin, non-personal phrase. No runtime synthesis service.
     if (!clipPromise) {
       clipPromise = (async () => {
-        const response = await fetch(naturalUrl, {signal:AbortSignal.timeout(4000)});
+        const response = await fetch(naturalUrl, {signal: AbortSignal.timeout(4000)});
         if (!response.ok) throw new Error('audio unavailable');
         const data = await response.arrayBuffer();
         if (!data.byteLength || data.byteLength > 256 * 1024) throw new Error('invalid clip size');
@@ -103,18 +62,19 @@
     }
     return clipPromise;
   }
-  async function naturalSpeech(text, purpose, token) {
+
+  async function naturalSpeech(purpose, token) {
     const fallback = () => {
       if (token !== generation) return;
       stop();
-      browserSpeech(text, purpose, generation, '안내형 재생 불가 · 기존 음성으로 대체 · ');
+      chime(generation, '안내형 음성 재생 불가');
     };
     speechTimer = setTimeout(fallback, 6000);
     try {
       await unlocked;
       if (token !== generation) return;
       if (!context || context.state !== 'running') throw new Error('audio context unavailable');
-      status(`${purpose} · 안내형 음성 준비 중`);
+      status(`${purpose} · 자연스러운 음성 준비 중`);
       const buffer = await loadClip();
       if (token !== generation) return;
       const source = clipSource = context.createBufferSource();
@@ -133,38 +93,34 @@
         if (token === generation) { stop(); status('안내형 재생 시간 초과 · 소리만 테스트로 확인해 주세요.'); }
       }, 15000);
       source.start();
-      status(`${purpose} · 자연스러운 안내형 음성 · 기기 음량도 확인해 주세요.`);
+      status(`${purpose} · 자연스러운 안내형 음성 재생 중`);
     } catch (_) { fallback(); }
   }
-  function speak(text, purpose) {
+
+  function speak(purpose) {
     stop();
-    if (selector.value === 'natural') naturalSpeech(text, purpose, generation);
-    else browserSpeech(text, purpose, generation);
+    naturalSpeech(purpose, generation);
   }
-  selector.addEventListener('change', () => {
-    stop();
-    try { localStorage.setItem('industrial-voice-mode', selector.value); } catch (_) {}
-    status(`${selector.selectedOptions[0].textContent} 선택 · 자동 알림 ${enabled ? '켜짐' : '꺼짐'} · 소리만 테스트로 비교해 보세요.`);
-  });
+
   $('audio-enable').addEventListener('click', () => {
     enabled = !enabled;
     $('audio-enable').setAttribute('aria-pressed', String(enabled));
     $('audio-enable').textContent = enabled ? '음성 알림 끄기' : '음성 알림 켜기';
     if (enabled) {
       unlock();
-      if (selector.value === 'natural') {
-        // Do not play a fall sentence just because notifications were enabled.
-        stop();
-        chime(generation, '안내형 음성 알림 켜짐', false);
-      } else speak('낙상 음성 알림을 켰습니다.', '음성 알림 활성화');
+      stop();
+      chime(generation, '자연스러운 음성 알림 켜짐', false);
+    } else {
+      stop();
+      status('꺼짐 · 자동 음성 알림을 중지했습니다.');
     }
-    else { stop(); status('꺼짐 · 자동 음성 알림을 중지했습니다.'); }
   });
+
   $('audio-test').addEventListener('click', () => {
-    unlock(); speak('낙상이 감지되었습니다.', '소리만 테스트');
+    unlock();
+    speak('소리만 테스트');
   });
-  // Consume every event even while muted. Initial history / long disconnections
-  // are a baseline, not a new accident; never replay a backlog on page return.
+
   const seen = new Set();
   let sampledAt = null;
   document.addEventListener('fall-events-updated', event => {
@@ -175,9 +131,10 @@
     for (const e of event.detail) seen.add(e.id);
     while (seen.size > 200) seen.delete(seen.values().next().value);
     if (enabled && live && !document.hidden && fresh.some(e => e.type === 'fall_confirmed')) {
-      speak('낙상이 감지되었습니다. 현장을 확인해 주세요.', '낙상 감지 알림');
+      speak('낙상 감지 알림');
     }
   });
+
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) { sampledAt = null; stop(); }
   });
