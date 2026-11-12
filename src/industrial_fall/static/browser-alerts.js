@@ -14,7 +14,6 @@
   let enabled = false, generation = 0, speechTimer, finishTimer, utterance;
   let context, oscillator, voice, unlocked = Promise.resolve();
   let clipSource, clipPromise;
-  const volume = () => Number($('audio-volume').value) / 100;
   const status = text => { $('audio-status').textContent = text; };
   function loadVoice() {
     const voices = synth?.getVoices() || [];
@@ -52,8 +51,8 @@
       tone.frequency.setValueAtTime(740, now);
       tone.frequency.setValueAtTime(550, now + .24);
       gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(volume() * .18, now + .02);
-      gain.gain.setValueAtTime(volume() * .18, now + .48);
+      gain.gain.linearRampToValueAtTime(.18, now + .02);
+      gain.gain.setValueAtTime(.18, now + .48);
       gain.gain.linearRampToValueAtTime(0, now + .55);
       tone.connect(gain); gain.connect(context.destination);
       tone.onended = () => { tone.disconnect(); gain.disconnect(); if (oscillator === tone) oscillator = null; };
@@ -68,7 +67,7 @@
     }
     try {
       const speech = utterance = new SpeechSynthesisUtterance(text);
-      speech.voice = voice; speech.lang = 'ko-KR'; speech.rate = 1; speech.volume = volume();
+      speech.voice = voice; speech.lang = 'ko-KR'; speech.rate = 1; speech.volume = 1;
       speech.onstart = () => {
         if (token !== generation) return;
         clearTimeout(speechTimer);
@@ -120,7 +119,7 @@
       if (token !== generation) return;
       const source = clipSource = context.createBufferSource();
       const gain = context.createGain();
-      source.buffer = buffer; gain.gain.value = volume();
+      source.buffer = buffer; gain.gain.value = 1;
       source.connect(gain); gain.connect(context.destination);
       source.onended = () => {
         source.disconnect(); gain.disconnect();
@@ -139,7 +138,6 @@
   }
   function speak(text, purpose) {
     stop();
-    if (volume() === 0) { status('음량 0% · 소리가 꺼져 있습니다.'); return; }
     if (selector.value === 'natural') naturalSpeech(text, purpose, generation);
     else browserSpeech(text, purpose, generation);
   }
@@ -157,19 +155,13 @@
       if (selector.value === 'natural') {
         // Do not play a fall sentence just because notifications were enabled.
         stop();
-        if (volume()) chime(generation, '안내형 음성 알림 켜짐', false);
-        else status('안내형 음성 알림 켜짐 · 음량 0%로 무음입니다.');
+        chime(generation, '안내형 음성 알림 켜짐', false);
       } else speak('낙상 음성 알림을 켰습니다.', '음성 알림 활성화');
     }
     else { stop(); status('꺼짐 · 자동 음성 알림을 중지했습니다.'); }
   });
   $('audio-test').addEventListener('click', () => {
     unlock(); speak('낙상이 감지되었습니다.', '소리만 테스트');
-  });
-  $('audio-volume').addEventListener('input', () => {
-    $('audio-volume-value').textContent = `${$('audio-volume').value}%`;
-    if (!volume()) stop();
-    status(`다음 재생 음량 ${$('audio-volume').value}% · 자동 알림 ${enabled ? '켜짐' : '꺼짐'}.`);
   });
   // Consume every event even while muted. Initial history / long disconnections
   // are a baseline, not a new accident; never replay a backlog on page return.

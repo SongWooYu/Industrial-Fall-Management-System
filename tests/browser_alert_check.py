@@ -189,10 +189,9 @@ def main():
         page.wait_for_function("document.getElementById('event-count').textContent === '10'")
         assert page.evaluate('audioCalls.length') == 3
 
-        page.eval_on_selector('#audio-volume', "el => {el.value=40;el.dispatchEvent(new Event('input'));}")
         page.click('#audio-test')
-        assert page.evaluate('audioCalls.at(-1).volume') == .4
-        assert page.locator('#audio-volume-value').inner_text() == '40%'
+        assert page.evaluate('audioCalls.at(-1).volume') == 1
+        assert page.locator('#audio-volume').count() == 0
         page.evaluate('window.voices=[]')
         page.click('#audio-test')
         page.wait_for_function('tones === 1')
@@ -205,11 +204,6 @@ def main():
         page.click('#audio-test')
         page.wait_for_function('tones === 3', timeout=6000)
         assert '응답 없음' in page.locator('#audio-status').inner_text()
-        calls = page.evaluate('audioCalls.length')
-        page.eval_on_selector('#audio-volume', "el => {el.value=0;el.dispatchEvent(new Event('input'));}")
-        page.click('#audio-test')
-        assert page.evaluate('audioCalls.length') == calls
-        assert '0%' in page.locator('#audio-status').inner_text()
 
         fixture['state'] = 'fallen'
         page.wait_for_function("document.getElementById('video-alarm').dataset.state === 'fallen'")
@@ -248,10 +242,9 @@ def main():
         page.select_option('#audio-voice', 'natural')
         assert page.evaluate('clipCalls.length') == 0, 'Selecting a voice is silent'
         assert page.locator('#audio-enable').get_attribute('aria-pressed') == 'false'
-        page.eval_on_selector('#audio-volume', "el => {el.value=60;el.dispatchEvent(new Event('input'));}")
         page.click('#audio-test')
         page.wait_for_function('clipCalls.length === 1')
-        assert page.evaluate('clipCalls[0].volume') == .6
+        assert page.evaluate('clipCalls[0].volume') == 1
         assert page.evaluate('audioCalls.length') == 0, 'Natural mode must not use browser TTS'
         page.click('#audio-test')
         page.wait_for_function('clipCalls.length === 2')

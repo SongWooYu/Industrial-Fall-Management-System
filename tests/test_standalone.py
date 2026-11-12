@@ -92,6 +92,7 @@ class StandaloneTest(unittest.TestCase):
         self.assertIn('id="audio-voice"', html)
         self.assertIn('value="natural"', html)
         self.assertIn('value="browser"', html)
+        self.assertNotIn('id="audio-volume"', html)
         response = self.client.get('/static/audio/fall-detected-ko-sunhi-v1.mp3')
         try:
             self.assertEqual(response.status_code, 200)

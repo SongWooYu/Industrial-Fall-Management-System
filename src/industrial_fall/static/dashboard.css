@@ -14,7 +14,6 @@
 .alert-controls .audio-note{flex-basis:100%;margin:0;font-size:11px}
 #audio-status{min-height:36px;max-width:520px;overflow-wrap:anywhere}
 #audio-enable[aria-pressed=true]{border-color:var(--okay);color:var(--okay)}
-.volume{display:flex;gap:8px;align-items:center;font-size:12px}.volume input{width:100px;accent-color:var(--accent)}.volume output{min-width:36px;font-variant-numeric:tabular-nums}
 .fall-notice{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:16px 20px;margin-bottom:20px;border:1px solid var(--alarm);border-left:5px solid var(--alarm);border-radius:10px;background:var(--panel)}
 .fall-notice strong{color:var(--alarm)}.fall-notice p{font-size:13px;margin:4px 0}.fall-notice small{font-size:11px;color:var(--muted)}.fall-notice button{flex-shrink:0}
 .video-alarm{position:absolute;z-index:2;top:18px;left:18px;max-width:calc(100% - 36px);padding:16px 24px;border:2px solid #fff;border-radius:6px;color:#fff;pointer-events:none;box-shadow:0 2px 12px #0005}
