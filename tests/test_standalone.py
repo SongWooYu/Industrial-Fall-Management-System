@@ -228,15 +228,28 @@ class StandaloneTest(unittest.TestCase):
             self.assertEqual(journal2.evidence.get(event["id"]), b"persisted-jpeg")
 
     def test_robot_monitor_routes_are_read_only(self):
+        import base64
+        import cv2
+        from industrial_fall.robot_monitor import RobotMonitor, _evaluate_dht22, _evaluate_mq135
+
         response = self.client.get("/api/robot/status")
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertIn("robot", payload)
-        self.assertIn("vision", payload)
+        self.assertNotIn("vision", payload)
         self.assertIn("inspection", payload)
+        # Edge AI config route is retired
+        self.assertEqual(self.client.post("/api/robot/config", json={"mode": "helmet"}).status_code, 404)
+        # When no viewer has opened /stream/robot, viewer_count is 0 and /monitor/video is not connected
+        self.assertEqual(payload["robot"]["viewer_count"], 0)
+        self.assertFalse(payload["robot"]["video_ws_connected"])
+
         records = payload["inspection"]["records"]
         self.assertGreaterEqual(len(records), 1)
+        # No live_web records may be loaded into the history list
+        self.assertTrue(all(r["source"] != "live_web" for r in records))
         first = records[0]
+        self.assertEqual(first["source"], "legacy_import")
         if first["overview_url"]:
             img_resp = self.client.get(first["overview_url"])
             try:
@@ -245,28 +258,104 @@ class StandaloneTest(unittest.TestCase):
                 self.assertGreater(len(img_resp.data), 1000)
             finally:
                 img_resp.close()
-        cfg_resp = self.client.post("/api/robot/config", json={"mode": "helmet", "stream_enabled": False})
-        self.assertEqual(cfg_resp.status_code, 200)
-        cfg_data = cfg_resp.get_json()
-        self.assertEqual(cfg_data["vision"]["mode"], "helmet")
-        self.assertFalse(cfg_data["robot"]["stream_enabled"])
-        # Cross-origin and unauthenticated external Cloudflare tunnel requests to /api/robot/config must be 403
-        self.assertEqual(
-            self.client.post(
-                "/api/robot/config",
-                json={"mode": "off"},
-                headers={"Origin": "https://evil.example"},
-            ).status_code,
-            403,
-        )
-        self.assertEqual(
-            self.client.post(
-                "/api/robot/config",
-                json={"mode": "off"},
-                headers={"Cf-Connecting-Ip": "203.0.113.10"},
-            ).status_code,
-            403,
-        )
+
+        # Verify viewer subscription & idle grace period logic
+        with tempfile.TemporaryDirectory() as tmpdir:
+            mon = RobotMonitor(
+                tmpdir,
+                poll_remote=False,
+                idle_grace_sec=0.15,
+            )
+            mon.monitor_key = "test-monitor-secret-key"
+            self.assertFalse(hasattr(mon, "_vision_loop"))
+            self.assertFalse(hasattr(mon, "_save_runtime_event"))
+            self.assertFalse(mon._should_keep_video_ws())
+            self.assertTrue(mon.subscribe_video())
+            self.assertEqual(mon.snapshot()["robot"]["viewer_count"], 1)
+            self.assertTrue(mon._should_keep_video_ws())
+            mon.unsubscribe_video()
+            self.assertEqual(mon.snapshot()["robot"]["viewer_count"], 0)
+            # Still within 0.15s grace period
+            self.assertTrue(mon._should_keep_video_ws())
+            time.sleep(0.2)
+            # Grace period expired -> should disconnect /monitor/video
+            self.assertFalse(mon._should_keep_video_ws())
+
+            # Verify MQ-135 uncalibrated sensor evaluation never claims '정상' or '유해가스 없음'
+            mq_eval = _evaluate_mq135(True, {"connected": True, "voltage_v": 0.412, "warming_up": False, "calibrated": False, "age_seconds": 0.5})
+            self.assertEqual(mq_eval["state"], "uncalibrated")
+            self.assertIn("미보정", mq_eval["label"])
+            self.assertNotIn("정상", mq_eval["label"])
+            self.assertNotIn("유해가스 없음", mq_eval["detail"])
+
+            # Verify DHT22 offline / stale / error evaluation
+            self.assertEqual(_evaluate_dht22(False, {"connected": True, "temperature_c": 24.0, "humidity_pct": 40.0})["state"], "offline")
+            self.assertEqual(_evaluate_dht22(True, {"connected": True, "temperature_c": 24.0, "humidity_pct": 40.0, "age_seconds": 25.0})["state"], "stale")
+            self.assertEqual(_evaluate_dht22(True, {"connected": False, "error": "checksum"})["state"], "error")
+
+            # Verify POST /api/robot/events authentication, validation, deduplication, and image serving
+            ok, buf = cv2.imencode(".jpg", np.zeros((120, 160, 3), dtype=np.uint8))
+            self.assertTrue(ok)
+            jpeg_b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+
+            app = create_app(self.pipeline, robot_monitor=mon).test_client()
+            test_event_id = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
+            event_payload = {
+                "event_id": test_event_id,
+                "event_date": "2026-11-12",
+                "event_time": "15:00:00",
+                "item": "벽면 균열",
+                "abnormal": "이상",
+                "match_score": 0.68,
+                "source": "windows_client",
+                "detail_jpeg_b64": jpeg_b64,
+                "overview_jpeg_b64": jpeg_b64,
+            }
+            # Missing or wrong key -> 401
+            self.assertEqual(app.post("/api/robot/events", json=event_payload).status_code, 401)
+            self.assertEqual(
+                app.post("/api/robot/events", json=event_payload, headers={"X-Monitor-Key": "wrong"}).status_code,
+                401,
+            )
+            # Valid key -> 201 Created
+            created_resp = app.post(
+                "/api/robot/events",
+                json=event_payload,
+                headers={"X-Monitor-Key": "test-monitor-secret-key"},
+            )
+            self.assertEqual(created_resp.status_code, 201)
+            created_json = created_resp.get_json()
+            self.assertTrue(created_json["ok"])
+            self.assertFalse(created_json["duplicate"])
+            self.assertEqual(created_json["event_id"], test_event_id)
+
+            # Duplicate upload -> 200 OK with duplicate=True
+            dup_resp = app.post(
+                "/api/robot/events",
+                json=event_payload,
+                headers={"X-Monitor-Key": "test-monitor-secret-key"},
+            )
+            self.assertEqual(dup_resp.status_code, 200)
+            self.assertTrue(dup_resp.get_json()["duplicate"])
+
+            # Status includes the newly uploaded event with truthful score label
+            status_records = app.get("/api/robot/status").get_json()["inspection"]["records"]
+            uploaded_rec = next(r for r in status_records if r["event_id"] == test_event_id)
+            self.assertEqual(uploaded_rec["source"], "windows_client")
+            self.assertEqual(uploaded_rec["score_kind"], "sift_strength")
+            self.assertIn("안전 확률 아님", uploaded_rec["score_label"])
+
+            # Uploaded images are served cleanly
+            ov_resp = app.get(uploaded_rec["overview_url"])
+            dt_resp = app.get(uploaded_rec["detail_url"])
+            try:
+                self.assertEqual(ov_resp.status_code, 200)
+                self.assertEqual(dt_resp.status_code, 200)
+                self.assertEqual(ov_resp.data, buf.tobytes())
+                self.assertEqual(dt_resp.data, buf.tobytes())
+            finally:
+                ov_resp.close()
+                dt_resp.close()
 
     def test_confirmed_incidents_are_not_evicted_by_suspected_flood(self):
         with tempfile.TemporaryDirectory() as tmpdir:

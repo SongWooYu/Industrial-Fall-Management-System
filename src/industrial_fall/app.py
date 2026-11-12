@@ -17,7 +17,7 @@ from .webrtc import register_webrtc_routes
 
 def create_app(pipeline, connection_history=None, robot_monitor=None):
     app = Flask(__name__)
-    app.config["MAX_CONTENT_LENGTH"] = 131072
+    app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024
     history = connection_history if connection_history is not None else ConnectionHistory()
     robot = robot_monitor if robot_monitor is not None else RobotMonitor(Path(__file__).resolve().parents[2], poll_remote=False)
     app.extensions["connection_history"] = history
@@ -141,6 +141,7 @@ def main():
     try:
         app.run(host=config["server"]["host"], port=config["server"]["port"], threaded=True, use_reloader=False)
     finally:
+        robot.close()
         pipeline.stop()
         history.close()
 

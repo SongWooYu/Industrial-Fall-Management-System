@@ -923,6 +923,12 @@ class ExplorationHistory:
                 LOGGER.info('탐사 이력 DB 확장: 이전 이상 기록 보존, 정상 기록 저장 가능')
             db.execute('CREATE INDEX IF NOT EXISTS idx_history_date '
                        'ON inspection_history(event_date DESC, event_time DESC)')
+            db.execute("""CREATE TABLE IF NOT EXISTS edge_upload_queue (
+                event_id TEXT PRIMARY KEY,
+                created_at TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                last_error TEXT
+            )""")
 
     def record_inspection(self, record, event_id):
         """[예]로 승인된 16개 검색 항목만 저장하며 같은 이벤트는 중복 저장하지 않습니다."""
@@ -962,6 +968,10 @@ class ExplorationHistory:
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (event_id, when.strftime('%Y-%m-%d'), when.strftime('%H:%M:%S'),
                  stored_item, status, photo_rel, scene_rel, confidence))
+            db.execute("""INSERT OR IGNORE INTO edge_upload_queue
+                (event_id, created_at, attempts)
+                VALUES (?, ?, 0)""",
+                (event_id, when.strftime('%Y-%m-%d %H:%M:%S')))
             db.commit()
             return cursor.lastrowid
         except Exception:
@@ -993,17 +1003,127 @@ class ExplorationHistory:
 
     def delete_inspection(self, row_id):
         with sqlite3.connect(self.db_path, timeout=5) as db:
-            row = db.execute('SELECT photo_path, overview_path '
+            row = db.execute('SELECT event_id, photo_path, overview_path '
                              'FROM inspection_history WHERE id=?', (row_id,)).fetchone()
             if row is None:
                 return False
+            event_id, photo_rel, overview_rel = row
             db.execute('DELETE FROM inspection_history WHERE id=?', (row_id,))
-        for relative in row:
+            db.execute('DELETE FROM edge_upload_queue WHERE event_id=?', (event_id,))
+        for relative in (photo_rel, overview_rel):
             try:
                 self.photo_file(relative).unlink(missing_ok=True)
             except (OSError, ValueError):
                 LOGGER.exception('삭제된 탐사 기록의 이미지 정리 실패 (%s)', relative)
         return True
+
+    def pending_uploads(self, limit=25):
+        with sqlite3.connect(self.db_path, timeout=5) as db:
+            return db.execute("""
+                SELECT h.event_id, h.event_date, h.event_time, h.item, h.abnormal,
+                       h.photo_path, h.overview_path, h.match_score
+                FROM edge_upload_queue q
+                JOIN inspection_history h ON h.event_id = q.event_id
+                ORDER BY q.rowid ASC LIMIT ?
+            """, (limit,)).fetchall()
+
+    def mark_uploaded(self, event_id):
+        with sqlite3.connect(self.db_path, timeout=5) as db:
+            db.execute('DELETE FROM edge_upload_queue WHERE event_id=?', (event_id,))
+
+    def record_upload_error(self, event_id, error_text):
+        with sqlite3.connect(self.db_path, timeout=5) as db:
+            db.execute("""UPDATE edge_upload_queue
+                SET attempts = attempts + 1, last_error = ?
+                WHERE event_id = ?""", (str(error_text)[:200], event_id))
+
+
+class EdgeEventUploader:
+    """확정 저장된 탐사 이벤트(메타데이터 + 사진 2장)를 Edge 관제 서버로 비동기 전송합니다.
+
+    네트워크 단절 시 SQLite edge_upload_queue에 보관했다가 재연결 시 중복 없이 재전송하며,
+    차량 제어(/control) 및 영상(/video) 통신에는 전혀 관여하지 않습니다.
+    """
+
+    def __init__(self, history_store, edge_url=None, api_key=None):
+        from urllib.request import Request, urlopen
+        self._Request = Request
+        self._urlopen = urlopen
+        self.history_store = history_store
+        cfg = self._load_config()
+        self.edge_url = (edge_url or os.environ.get('EDGE_SERVER_URL') or cfg.get('edge_url') or 'http://192.168.1.20:8080').rstrip('/')
+        self.api_key = (api_key or os.environ.get('CAR_MONITOR_KEY') or cfg.get('car_monitor_key') or '').strip()
+        self.wake = threading.Event()
+        self.closed = threading.Event()
+        if self.history_store is not None:
+            threading.Thread(target=self.run, daemon=True).start()
+
+    @staticmethod
+    def _load_config():
+        cfg_path = PROJECT_ROOT / 'edge_config.json'
+        if cfg_path.is_file():
+            with suppress(Exception):
+                return json.loads(cfg_path.read_text(encoding='utf-8'))
+        return {}
+
+    def notify(self):
+        self.wake.set()
+
+    def close(self):
+        self.closed.set()
+        self.wake.set()
+
+    def flush_once(self):
+        if self.history_store is None or not self.edge_url or not self.api_key:
+            return 0
+        sent = 0
+        for row in self.history_store.pending_uploads():
+            if self.closed.is_set():
+                break
+            event_id, ev_date, ev_time, item, abnormal, photo_rel, overview_rel, score = row
+            try:
+                detail_bytes = self.history_store.photo_file(photo_rel).read_bytes()
+                overview_bytes = self.history_store.photo_file(overview_rel).read_bytes()
+            except (OSError, ValueError) as err:
+                LOGGER.warning('업로드 대상 이미지 파일 없음 (%s): %s', event_id, err)
+                self.history_store.mark_uploaded(event_id)
+                continue
+            payload = json.dumps({
+                'event_id': event_id,
+                'event_date': ev_date,
+                'event_time': ev_time,
+                'item': item,
+                'abnormal': abnormal,
+                'match_score': float(score),
+                'source': 'windows_client',
+                'detail_jpeg_b64': base64.b64encode(detail_bytes).decode('ascii'),
+                'overview_jpeg_b64': base64.b64encode(overview_bytes).decode('ascii'),
+            }).encode('utf-8')
+            req = self._Request(
+                f'{self.edge_url}/api/robot/events',
+                data=payload,
+                method='POST',
+                headers={
+                    'Content-Type': 'application/json',
+                    'X-Monitor-Key': self.api_key,
+                },
+            )
+            try:
+                with self._urlopen(req, timeout=5) as resp:
+                    if resp.status in (200, 201):
+                        self.history_store.mark_uploaded(event_id)
+                        sent += 1
+            except Exception as err:
+                self.history_store.record_upload_error(event_id, err)
+                break
+        return sent
+
+    def run(self):
+        while not self.closed.is_set():
+            with suppress(Exception):
+                self.flush_once()
+            self.wake.wait(5.0)
+            self.wake.clear()
 
 
 class CarApp:
@@ -1049,6 +1169,7 @@ class CarApp:
             self.history_store = None
             self.history_error = str(error)
             LOGGER.exception('탐사 이력 DB 초기화 실패')
+        self.edge_uploader = EdgeEventUploader(self.history_store)
         threading.Thread(target=prepare_search_audio,
                          args=(self.search_target.get(),), daemon=True).start()
         root.title('원격구역 탐사로봇 제어 시스템 V3')
@@ -1711,6 +1832,8 @@ class CarApp:
                 try:
                     record_id = self.history_store.record_inspection(
                         record, self.search_session)
+                    if hasattr(self, 'edge_uploader') and self.edge_uploader is not None:
+                        self.edge_uploader.notify()
                 except (OSError, ValueError, sqlite3.Error) as error:
                     LOGGER.exception('사용자가 승인한 탐사 이력 저장 실패')
                     messagebox.showerror('탐사 이력 저장 오류',
@@ -2315,6 +2438,8 @@ class CarApp:
         self.closing = True
         if self.connection:
             self.connection.close()
+        if hasattr(self, 'edge_uploader') and self.edge_uploader is not None:
+            self.edge_uploader.close()
         self.detector.close()
         self.root.destroy()
 

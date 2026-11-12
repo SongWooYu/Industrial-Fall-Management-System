@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
   <title>산업안전 낙상관리시스템</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261112-video-fix') }}">
-  <script defer src="{{ url_for('static', filename='stream-player.js', v='20261112-video-fix') }}"></script>
-  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261112-video-fix') }}"></script>
-  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261112-video-fix') }}"></script>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261112-robot-v2') }}">
+  <script defer src="{{ url_for('static', filename='stream-player.js', v='20261112-robot-v2') }}"></script>
+  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261112-robot-v2') }}"></script>
+  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261112-robot-v2') }}"></script>
 </head>
 <body>
   <header>
@@ -14,7 +14,7 @@
     <div class="tools">
       <nav class="view-tabs" aria-label="관제 화면 전환">
         <button id="tab-btn-fall" type="button" class="tab-btn active" aria-selected="true">현장 낙상 관제</button>
-        <button id="tab-btn-robot" type="button" class="tab-btn" aria-selected="false">안전탐색 로봇 · 실시간 영상/AI 분석</button>
+        <button id="tab-btn-robot" type="button" class="tab-btn" aria-selected="false">안전탐색 로봇 관제</button>
       </nav>
       <span class="node">Pi5 · Hailo-8</span>
       <label class="sr-only" for="theme">화면 테마</label>
@@ -22,20 +22,7 @@
     </div>
   </header>
   <main>
-    <section id="robot-alert-notice" class="fall-notice robot-alert-notice" aria-label="안전탐색 로봇 최신 감지 알림" hidden>
-      <div class="robot-alert-body">
-        <img id="robot-alert-thumb" class="robot-alert-thumb" alt="로봇 감지 캡처 썸네일">
-        <div>
-          <strong id="robot-alert-title">안전탐색 로봇 이상 감지 알림</strong>
-          <p id="robot-alert-detail"></p>
-          <small>알림이나 이미지를 누르면 해당 감지 사진과 현재 로봇의 실시간 카메라 영상을 함께 확인합니다.</small>
-        </div>
-      </div>
-      <div class="tools">
-        <button id="open-robot-live" type="button" class="primary-btn">실시간 영상 · 상세 보기 ↗</button>
-        <button id="dismiss-robot-alert" type="button">알림 접기</button>
-      </div>
-    </section>
+    <div id="robot-toast-container" class="robot-toast-container" aria-live="polite" aria-atomic="true"></div>
 
     <div id="tab-fall">
       <section id="alarm" class="alarm" data-state="unobserved">
@@ -79,108 +66,123 @@
     </div>
 
     <div id="tab-robot" hidden>
-      <section id="robot-banner" class="alarm" data-state="normal">
-        <div>
-          <span class="eyebrow">SAFETY EXPLORATION ROBOT · WEB CLIENT (NO DRIVING CONTROL)</span>
-          <h2 id="robot-status-title">안전탐색 원격로봇 상태 확인 중</h2>
-          <p id="robot-status-detail">라즈베리파이5 웹 클라이언트가 로봇(192.168.1.206:5000)에서 실시간 영상·센서 데이터를 수신하고 안전모·결함·물체 AI 분석을 수행합니다.</p>
+      <section class="panel robot-topbar" aria-label="탐사로봇 실시간 상태 및 센서 바">
+        <div class="robot-topbar-cell" id="robot-cell-conn">
+          <span class="robot-cell-label">로봇 연결 상태</span>
+          <strong id="robot-conn-state">연결 확인 중</strong>
+          <small id="robot-conn-sub">192.168.1.206:5000</small>
         </div>
-        <div class="update">
-          <span id="robot-connection">연결 확인 중</span>
-          <small id="robot-updated">—</small>
+        <div class="robot-topbar-cell" id="robot-cell-pc">
+          <span class="robot-cell-label">조종 클라이언트 · 영상</span>
+          <strong id="robot-pc-badge">확인 중</strong>
+          <small id="robot-video-sub">관제 대기</small>
+        </div>
+        <div class="robot-topbar-cell" id="robot-cell-drive">
+          <span class="robot-cell-label">주행 방향 / 출력(PWM)</span>
+          <strong id="robot-direction">—</strong>
+          <small id="robot-reason-sub">상태 확인 중</small>
+        </div>
+        <div class="robot-topbar-cell" id="robot-cell-dist">
+          <span class="robot-cell-label">전방 초음파 거리</span>
+          <strong id="robot-distance">—</strong>
+          <small id="robot-obstacle-sub">장애물 감시</small>
+        </div>
+        <div class="robot-topbar-cell" id="robot-cell-dht">
+          <span class="robot-cell-label">온·습도 (DHT22)</span>
+          <strong id="robot-climate">측정 대기</strong>
+          <small id="robot-climate-sub">상태 확인 중</small>
+        </div>
+        <div class="robot-topbar-cell" id="robot-cell-mq">
+          <span class="robot-cell-label">가스 센서 (MQ-135)</span>
+          <strong id="robot-gas">측정 대기</strong>
+          <small id="robot-gas-sub">원시 전압 · 미보정</small>
         </div>
       </section>
 
-      <section class="panel robot-telemetry-panel">
-        <div class="panel-head">
-          <div><h2>원격 로봇 실시간 센서 · 상태 (192.168.1.206)</h2><span class="muted">초음파 거리 · 온습도(DHT22) · 유해가스(MQ-135) · 주행 상태</span></div>
-          <div class="tools">
-            <span class="node" id="robot-pc-badge">연결 확인 중</span>
-            <button id="robot-stream-toggle" type="button" aria-pressed="true">웹 영상 수신 중 (PC 조종 양보 시 클릭)</button>
-          </div>
-        </div>
-        <div class="metrics robot-metrics-6">
-          <div><span>현재 동작 / 출력</span><strong id="robot-direction">—</strong></div>
-          <div><span>전방 초음파 거리</span><strong id="robot-distance">—</strong></div>
-          <div><span>온·습도 (DHT22)</span><strong id="robot-climate">—</strong></div>
-          <div><span>유해가스 (MQ-135)</span><strong id="robot-gas">—</strong></div>
-          <div><span>실시간 AI 탐지 결과</span><strong id="robot-vision-summary">—</strong></div>
-          <div><span>분석 속도 / 모드</span><strong id="robot-vision-perf">—</strong></div>
-        </div>
-      </section>
-
-      <div class="layout robot-layout">
-        <section class="panel robot-detail-panel" id="robot-live-focus">
+      <div class="robot-3col-layout">
+        <section class="panel robot-col-live" id="robot-live-focus">
           <div class="panel-head">
             <div>
-              <h2>로봇 실시간 카메라 &amp; AI 분석 모니터</h2>
-              <span class="muted" id="robot-video-status-text">안전모 미착용 · 건축물 결함(균열/철근/누수) · 작업자 및 물체 실시간 탐지</span>
+              <h2>실시간 영상</h2>
+              <span class="muted" id="robot-video-host-label">192.168.1.206:5000 · /monitor/video 원본 (640×480)</span>
             </div>
             <div class="tools">
-              <label class="sr-only" for="robot-vision-mode">AI 분석 항목</label>
-              <select id="robot-vision-mode">
-                <option value="all">통합 AI 분석 (안전모 · 결함 · 작업자 · 물체)</option>
-                <option value="helmet">안전모 착용 여부 전용 분석</option>
-                <option value="defect">건축물 결함 3종 전용 분석 (균열 · 철근 · 누수)</option>
-                <option value="object">작업자 · 일반 물체 전용 분석</option>
-                <option value="off">분석 끄기 (원본 영상만)</option>
-              </select>
-              <label class="sr-only" for="robot-overlay-mode">영상 표시 방식</label>
-              <select id="robot-overlay-mode">
-                <option value="1">AI 분석 오버레이 영상</option>
-                <option value="0">원본 카메라 영상</option>
-              </select>
+              <span class="badge-live" id="robot-live-pill">대기</span>
+              <button id="robot-video-retry" type="button">영상 재연결</button>
             </div>
           </div>
-
-          <div class="robot-live-and-capture">
-            <div class="robot-live-box">
-              <div class="subhead">
-                <strong>현재 로봇 실시간 영상 (LIVE 640×480)</strong>
-                <span class="badge-live" id="robot-live-pill">LIVE</span>
+          <div class="robot-live-body">
+            <div class="video-wrap robot-video-wrap">
+              <img id="robot-live-stream" class="robot-stream" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="안전탐색 로봇 실시간 원본 카메라 영상">
+              <div id="robot-video-overlay" class="robot-video-overlay" data-state="idle">
+                <strong id="robot-video-overlay-title">실시간 영상 대기</strong>
+                <p id="robot-video-overlay-detail">로봇 관제 탭이 열리면 /monitor/video 스트림을 수신합니다.</p>
               </div>
-              <div class="video-wrap robot-video-wrap">
-                <img id="robot-live-stream" class="stream" src="/stream/robot?overlay=1" alt="안전탐색 로봇 실시간 카메라 및 AI 분석 영상">
-                <span class="transport-label" id="robot-stream-label">실시간 AI 분석 스트림</span>
-              </div>
-            </div>
-
-            <div class="robot-capture-box">
-              <div class="subhead">
-                <strong id="robot-selected-title">선택한 감지 이벤트 캡처 사진</strong>
-                <span class="count" id="robot-selected-badge">대기</span>
-              </div>
-              <p class="muted" id="robot-selected-meta">우측 감지 알림/이력을 누르면 당시 캡처 이미지와 왼쪽 실시간 영상을 동시에 비교합니다.</p>
-              <div class="robot-photo-grid">
-                <figure class="robot-figure">
-                  <figcaption>발견 당시 전체 영상 (Overview)</figcaption>
-                  <img id="robot-overview-img" alt="탐사 로봇 현장 전체 캡처" hidden>
-                  <p id="robot-overview-empty" class="empty">감지 이벤트를 선택해 주세요.</p>
-                </figure>
-                <figure class="robot-figure">
-                  <figcaption>검출 대상 부분 확대 (Detail)</figcaption>
-                  <img id="robot-detail-img" alt="탐사 로봇 탐지 대상 확대 캡처" hidden>
-                  <p id="robot-detail-empty" class="empty">감지 이벤트를 선택해 주세요.</p>
-                </figure>
-              </div>
+              <span class="transport-label" id="robot-stream-label">원본 MJPEG 릴레이 (/monitor/video)</span>
             </div>
           </div>
-
-          <div class="robot-summary-bar" id="robot-item-breakdown"></div>
+          <p class="storage-note">로봇 관제 탭이 열려 있을 때만 실시간 영상을 수신하며, 마지막 관제자가 탭을 닫으면 10초 후 연결을 해제합니다. 주행 제어 명령은 전송하지 않습니다.</p>
         </section>
 
-        <aside class="panel events-panel">
+        <section class="panel robot-col-selected">
           <div class="panel-head">
-            <div><h2>탐사 감지 알림 · 이력 목록</h2><span class="muted" id="robot-stats-text">이벤트를 누르면 캡처 이미지와 현재 실시간 영상을 함께 표시합니다</span></div>
+            <div>
+              <h2>선택한 탐사 기록</h2>
+              <span class="muted">발견 당시 전체 화면(Overview) 및 검출 확대(Detail)</span>
+            </div>
+            <span class="count" id="robot-selected-badge">선택 대기</span>
+          </div>
+          <div class="robot-selected-body">
+            <div class="robot-meta-grid">
+              <div><span>탐사 항목</span><strong id="robot-sel-item">—</strong></div>
+              <div><span>감지 시각</span><strong id="robot-sel-time">—</strong></div>
+              <div><span>판정 결과</span><strong id="robot-sel-abnormal">—</strong></div>
+              <div><span>데이터 출처</span><strong id="robot-sel-source">—</strong></div>
+              <div class="robot-meta-wide"><span>판정 지표 (안전/위험 확률 아님)</span><strong id="robot-sel-score">—</strong></div>
+            </div>
+            <div class="robot-photo-grid">
+              <figure class="robot-figure">
+                <figcaption>발견 당시 전체 영상 (Overview)</figcaption>
+                <img id="robot-overview-img" alt="탐사 로봇 현장 전체 캡처" hidden>
+                <p id="robot-overview-empty" class="empty">우측 이력에서 항목을 선택해 주세요.</p>
+              </figure>
+              <figure class="robot-figure">
+                <figcaption>검출 대상 부분 확대 (Detail)</figcaption>
+                <img id="robot-detail-img" alt="탐사 로봇 탐지 대상 확대 캡처" hidden>
+                <p id="robot-detail-empty" class="empty">우측 이력에서 항목을 선택해 주세요.</p>
+              </figure>
+            </div>
+          </div>
+          <p class="storage-note">이미지를 클릭하면 원본 크기로 확대하거나 파일로 저장할 수 있습니다.</p>
+        </section>
+
+        <aside class="panel robot-col-history">
+          <div class="panel-head">
+            <div>
+              <h2>탐사 이력</h2>
+              <span class="muted" id="robot-stats-text">총 0건 · 이상 0건 · 정상 0건</span>
+            </div>
             <span class="count" id="robot-record-count">0</span>
           </div>
-          <div id="robot-records" class="events"><p class="empty">탐사 이력을 불러오는 중입니다.</p></div>
-          <p class="storage-note">실시간 감지된 안전모 미착용·건축 결함·물체 알림 및 기존 탐사 DB 이력이 통합 표시됩니다. 항목을 클릭하면 즉시 실시간 영상과 함께 확인합니다.</p>
+          <div class="robot-history-head" aria-hidden="true">
+            <span>날짜 / 시각</span>
+            <span>탐사 항목</span>
+            <span>판정</span>
+            <span>출처</span>
+          </div>
+          <div id="robot-records" class="robot-history-list" role="region" aria-label="탐사 이력 목록">
+            <p class="empty">탐사 이력을 불러오는 중입니다.</p>
+          </div>
+          <div class="robot-pagination">
+            <button id="robot-page-prev" type="button" disabled>이전</button>
+            <span id="robot-page-info" class="robot-page-info">1 / 1 페이지</span>
+            <button id="robot-page-next" type="button" disabled>다음</button>
+          </div>
         </aside>
       </div>
     </div>
 
-    <footer><span>Hailo YOLOv8s-Pose + EdgeFall &amp; Safety Exploration Robot Live AI Client</span><span>산업 현장 낙상 감지 및 안전탐색 로봇 통합 관제</span></footer>
+    <footer><span>Hailo YOLOv8s-Pose + EdgeFall &amp; Safety Exploration Robot Read-Only Monitor</span><span>산업 현장 낙상 감지 및 안전탐색 로봇 통합 관제</span></footer>
   </main>
   <dialog id="evidence"><div class="panel-head"><h2 id="evidence-title">순간 캡처 상세 보기</h2><div class="tools"><a id="download-evidence" class="btn-link" href="#" download="capture.jpg">이미지 저장 ↓</a><button id="close-evidence" type="button" aria-label="캡처 닫기">닫기 ×</button></div></div><img id="evidence-image" alt="감지 순간 캡처 원본"><p id="evidence-detail"></p></dialog>
 </body>
