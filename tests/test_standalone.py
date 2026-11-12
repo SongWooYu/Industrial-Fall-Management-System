@@ -232,6 +232,7 @@ class StandaloneTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertIn("robot", payload)
+        self.assertIn("vision", payload)
         self.assertIn("inspection", payload)
         records = payload["inspection"]["records"]
         self.assertGreaterEqual(len(records), 1)
@@ -244,6 +245,11 @@ class StandaloneTest(unittest.TestCase):
                 self.assertGreater(len(img_resp.data), 1000)
             finally:
                 img_resp.close()
+        cfg_resp = self.client.post("/api/robot/config", json={"mode": "helmet", "stream_enabled": False})
+        self.assertEqual(cfg_resp.status_code, 200)
+        cfg_data = cfg_resp.get_json()
+        self.assertEqual(cfg_data["vision"]["mode"], "helmet")
+        self.assertFalse(cfg_data["robot"]["stream_enabled"])
 
 
 if __name__ == "__main__":

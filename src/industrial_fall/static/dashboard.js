@@ -10,6 +10,16 @@
   theme.addEventListener('change', applyTheme); applyTheme();
 
   let activeTab = 'fall';
+  function refreshRobotStreamSrc() {
+    const img = $('robot-live-stream');
+    if (!img) return;
+    const overlay = $('robot-overlay-mode')?.value ?? '1';
+    img.src = `/stream/robot?overlay=${overlay}&t=${Date.now()}`;
+    if ($('robot-stream-label')) {
+      $('robot-stream-label').textContent = overlay === '1' ? '실시간 AI 분석 스트림' : '원본 카메라 스트림';
+    }
+  }
+
   function switchTab(tab) {
     activeTab = tab;
     const isFall = tab === 'fall';
@@ -24,7 +34,10 @@
       $('tab-btn-robot').setAttribute('aria-selected', String(!isFall));
     }
     window.dispatchEvent(new Event('online'));
-    if (!isFall) fetchRobot();
+    if (!isFall) {
+      refreshRobotStreamSrc();
+      fetchRobot();
+    }
   }
   $('tab-btn-fall')?.addEventListener('click', () => switchTab('fall'));
   $('tab-btn-robot')?.addEventListener('click', () => switchTab('robot'));
@@ -63,14 +76,14 @@
       else el.removeAttribute('aria-current');
     });
   }
-  function openEvidenceModal(event) {
-    $('evidence-title').textContent = `${eventTitles[event.type] || event.type} · ${date(event.timestamp)}`;
-    $('evidence-image').src = event.snapshot_url;
+  function openEvidenceModal(titleText, imgUrl, detailText, downloadName) {
+    $('evidence-title').textContent = titleText;
+    $('evidence-image').src = imgUrl;
     if ($('download-evidence')) {
-      $('download-evidence').href = event.snapshot_url;
-      $('download-evidence').download = `fall-capture-${event.id.slice(0, 8)}.jpg`;
+      $('download-evidence').href = imgUrl;
+      $('download-evidence').download = downloadName || 'capture.jpg';
     }
-    $('evidence-detail').textContent = '감지한 프레임과 같은 시점의 박스·관절 캡처입니다. 클릭하여 저장하거나 나중에 다시 확인할 수 있습니다.';
+    $('evidence-detail').textContent = detailText;
     $('evidence').showModal();
   }
   let eventKey = null;
@@ -99,14 +112,17 @@
       item.append(title,time);
       if (event.track) { const p = document.createElement('p'); p.textContent=`추적 #${event.track.track_id} · 모델 점수 ${(event.track.temporal_probability*100).toFixed(1)}%`; item.append(p); }
       if (event.snapshot_url) {
+        const modalTitle = `${eventTitles[event.type] || event.type} · ${date(event.timestamp)}`;
+        const modalDetail = '감지한 프레임과 같은 시점의 박스·관절 캡처입니다. 클릭하여 저장하거나 나중에 다시 확인할 수 있습니다.';
+        const dlName = `fall-capture-${event.id.slice(0, 8)}.jpg`;
         const thumb = document.createElement('img');
         thumb.className = 'event-thumb';
         thumb.src = event.snapshot_url;
         thumb.alt = `${eventTitles[event.type] || event.type} 캡처 미리보기`;
         thumb.loading = 'lazy';
-        thumb.addEventListener('click', () => openEvidenceModal(event));
+        thumb.addEventListener('click', () => openEvidenceModal(modalTitle, event.snapshot_url, modalDetail, dlName));
         const button = document.createElement('button'); button.type='button'; button.textContent='낙상 순간 캡처 크게 보기 ↗';
-        button.addEventListener('click', () => openEvidenceModal(event));
+        button.addEventListener('click', () => openEvidenceModal(modalTitle, event.snapshot_url, modalDetail, dlName));
         item.append(thumb, button);
       }
       $('events').append(item);
@@ -135,13 +151,22 @@
 
   let selectedRobotEventId = null;
   let robotHistoryKey = null;
-  function selectRobotRecord(rec) {
+  let latestRobotAlertRecord = null;
+  let dismissedRobotAlertIds = [];
+  try { dismissedRobotAlertIds = JSON.parse(sessionStorage.getItem('industrial-dismissed-robot-alerts') || '[]'); } catch (_) {}
+  if (!Array.isArray(dismissedRobotAlertIds)) dismissedRobotAlertIds = [];
+
+  function selectRobotRecord(rec, opts = {}) {
+    if (!rec) return;
     selectedRobotEventId = rec.event_id;
     document.querySelectorAll('#robot-records .event').forEach(el => {
       el.classList.toggle('selected', el.dataset.eventId === rec.event_id);
     });
+    if ($('robot-selected-title')) {
+      $('robot-selected-title').textContent = `[${rec.abnormal}] ${rec.item} 캡처 사진`;
+    }
     if ($('robot-selected-meta')) {
-      $('robot-selected-meta').textContent = `${rec.timestamp} · ${rec.item} · 일치/신뢰도 ${(rec.match_score * 100).toFixed(1)}%`;
+      $('robot-selected-meta').textContent = `${rec.timestamp} · ${rec.item} · 일치/신뢰도 ${(rec.match_score * 100).toFixed(1)}% (좌측 실시간 영상과 동시 비교 중)`;
     }
     if ($('robot-selected-badge')) {
       $('robot-selected-badge').textContent = `${rec.item} (${rec.abnormal})`;
@@ -153,18 +178,100 @@
       overImg.src = rec.overview_url;
       overImg.hidden = false;
       overEmpty.hidden = true;
+      overImg.onclick = () => openEvidenceModal(
+        `[${rec.abnormal}] ${rec.item} — 발견 당시 전체 영상 (${rec.timestamp})`,
+        rec.overview_url,
+        `탐지 일치/신뢰도 ${(rec.match_score * 100).toFixed(1)}% · 현장 전체 캡처`,
+        `robot-overview-${rec.event_id.slice(0, 8)}.jpg`
+      );
     }
     if (detImg && detEmpty) {
       detImg.src = rec.detail_url;
       detImg.hidden = false;
       detEmpty.hidden = true;
+      detImg.onclick = () => openEvidenceModal(
+        `[${rec.abnormal}] ${rec.item} — 검출 대상 확대 (${rec.timestamp})`,
+        rec.detail_url,
+        `탐지 일치/신뢰도 ${(rec.match_score * 100).toFixed(1)}% · 부분 확대 캡처`,
+        `robot-detail-${rec.event_id.slice(0, 8)}.jpg`
+      );
+    }
+    if (opts.focusLive) {
+      if (activeTab !== 'robot') switchTab('robot');
+      else refreshRobotStreamSrc();
+      const focusEl = $('robot-live-focus');
+      if (focusEl) {
+        focusEl.scrollIntoView({behavior: 'smooth', block: 'start'});
+        focusEl.classList.remove('pulse-focus');
+        void focusEl.offsetWidth;
+        focusEl.classList.add('pulse-focus');
+      }
     }
   }
+
+  $('open-robot-live')?.addEventListener('click', () => {
+    if (latestRobotAlertRecord) selectRobotRecord(latestRobotAlertRecord, {focusLive: true});
+    else switchTab('robot');
+  });
+  $('robot-alert-thumb')?.addEventListener('click', () => {
+    if (latestRobotAlertRecord) selectRobotRecord(latestRobotAlertRecord, {focusLive: true});
+  });
+  $('dismiss-robot-alert')?.addEventListener('click', () => {
+    if (latestRobotAlertRecord) {
+      dismissedRobotAlertIds.push(latestRobotAlertRecord.event_id);
+      dismissedRobotAlertIds = dismissedRobotAlertIds.slice(-50);
+      try { sessionStorage.setItem('industrial-dismissed-robot-alerts', JSON.stringify(dismissedRobotAlertIds)); } catch (_) {}
+    }
+    if ($('robot-alert-notice')) $('robot-alert-notice').hidden = true;
+  });
+
+  async function updateRobotConfig(payload) {
+    try {
+      const response = await fetch('/api/robot/config', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(payload),
+      });
+      if (response.ok) {
+        showRobot(await response.json());
+        refreshRobotStreamSrc();
+      }
+    } catch (_) {}
+  }
+
+  $('robot-vision-mode')?.addEventListener('change', e => {
+    updateRobotConfig({mode: e.target.value});
+  });
+  $('robot-overlay-mode')?.addEventListener('change', () => {
+    refreshRobotStreamSrc();
+  });
+  $('robot-stream-toggle')?.addEventListener('click', () => {
+    const btn = $('robot-stream-toggle');
+    const currentlyEnabled = btn?.getAttribute('aria-pressed') !== 'false';
+    updateRobotConfig({stream_enabled: !currentlyEnabled});
+  });
 
   function showRobot(data) {
     if (!data || !$('tab-robot')) return;
     const r = data.robot || {};
+    const v = data.vision || {};
     const ins = data.inspection || {};
+    const records = ins.records || [];
+
+    // Update top alert banner if there is an unacknowledged abnormal (or latest) robot detection
+    const alertCandidate = records.find(x => x.abnormal === '이상') || v.latest_alert || records[0];
+    if (alertCandidate && !dismissedRobotAlertIds.includes(alertCandidate.event_id)) {
+      latestRobotAlertRecord = alertCandidate;
+      if ($('robot-alert-notice')) $('robot-alert-notice').hidden = false;
+      if ($('robot-alert-thumb')) $('robot-alert-thumb').src = alertCandidate.overview_url || alertCandidate.detail_url;
+      if ($('robot-alert-title')) {
+        $('robot-alert-title').textContent = `안전탐색 로봇 [${alertCandidate.abnormal}] ${alertCandidate.item} 감지 알림`;
+      }
+      if ($('robot-alert-detail')) {
+        $('robot-alert-detail').textContent = `${alertCandidate.timestamp} · 탐지 신뢰도 ${(alertCandidate.match_score * 100).toFixed(1)}% · 클릭하면 현재 로봇 실시간 영상과 함께 확인합니다.`;
+      }
+    }
+
     const banner = $('robot-banner');
     if (banner) {
       banner.dataset.state = !r.online ? 'unobserved' : (r.obstacle_warning || r.motor_error || r.camera_error ? 'suspected' : 'normal');
@@ -178,39 +285,66 @@
       const err = r.motor_error || r.camera_error;
       $('robot-status-detail').textContent = err
         ? `하드웨어 점검 필요: ${err}`
-        : `로봇 주소 ${r.host || '192.168.1.206'}:${r.port || 5000} · 조종 간섭 없는 읽기 전용(Read-Only) 상태 수집 및 현장 탐사 DB 분석 화면입니다.`;
+        : (r.video_message || `로봇 주소 ${r.host || '192.168.1.206'}:${r.port || 5000} · 실시간 영상 수신 및 AI 분석 중`);
     }
     if ($('robot-connection')) {
-      $('robot-connection').textContent = r.online ? '로봇 서버 ONLINE' : '연결 대기';
+      $('robot-connection').textContent = r.video_online ? '실시간 영상 · AI 활성' : (r.online ? '텔레메트리 ONLINE' : '연결 대기');
     }
     if ($('robot-updated')) {
       $('robot-updated').textContent = `갱신 ${new Date().toLocaleTimeString('ko-KR', {hour12:false})}`;
     }
     if ($('robot-pc-badge')) {
-      $('robot-pc-badge').textContent = r.pc_connected ? '원격 조종 PC 연결됨 (주행 활성)' : '조종 PC 대기 중 (스탠바이)';
+      $('robot-pc-badge').textContent = r.video_online
+        ? 'Pi5 웹 클라이언트 영상 연결됨'
+        : (r.pc_connected ? '외부 Windows 조종 PC 연결됨' : '대기 중');
     }
+    if ($('robot-stream-toggle')) {
+      const enabled = r.stream_enabled !== false;
+      $('robot-stream-toggle').setAttribute('aria-pressed', String(enabled));
+      $('robot-stream-toggle').textContent = enabled
+        ? '웹 실시간 영상 수신 중 (PC 조종 양보 시 클릭)'
+        : '웹 영상 일시정지됨 (클릭하여 다시 연결)';
+    }
+    if ($('robot-live-pill')) {
+      $('robot-live-pill').textContent = r.video_online ? 'LIVE 수신 중' : (r.video_state === 'conflict_pc_active' ? '외부 PC 조종 중' : '연결 대기');
+      $('robot-live-pill').dataset.live = String(Boolean(r.video_online));
+    }
+    if ($('robot-vision-mode') && v.mode && document.activeElement !== $('robot-vision-mode')) {
+      $('robot-vision-mode').value = v.mode;
+    }
+
     if ($('robot-direction')) {
-      $('robot-direction').textContent = r.online ? `${r.direction_label || r.direction}` : '—';
-    }
-    if ($('robot-pwm')) {
-      $('robot-pwm').textContent = r.online ? `${r.pwm ?? 0} %` : '—';
+      $('robot-direction').textContent = r.online ? `${r.direction_label || r.direction} (${r.pwm ?? 0}%)` : '—';
     }
     if ($('robot-distance')) {
       $('robot-distance').textContent = r.distance_cm != null
-        ? `${r.distance_cm.toFixed(1)} cm${r.obstacle_warning ? ' (장애물 주의)' : ''}`
+        ? `${r.distance_cm.toFixed(1)} cm${r.obstacle_warning ? ' (장애물 정지)' : ''}`
         : '—';
     }
-    if ($('robot-health')) {
-      const d = r.diagnostics || {};
-      $('robot-health').textContent = r.online
-        ? (r.motor_error || r.camera_error ? '오류 감지' : `모터 ${d.motor_age_sec ?? 0}s / 카메라 ${d.camera_age_sec ?? 0}s`)
-        : '—';
+    if ($('robot-climate')) {
+      const dht = r.dht22;
+      $('robot-climate').textContent = (dht && dht.connected && dht.temperature_c != null)
+        ? `${dht.temperature_c.toFixed(1)}°C / ${dht.humidity_pct.toFixed(1)}%`
+        : '측정 대기';
+    }
+    if ($('robot-gas')) {
+      const mq = r.mq135;
+      $('robot-gas').textContent = (mq && mq.connected && mq.voltage_v != null)
+        ? `${mq.voltage_v.toFixed(3)} V ${mq.warming_up ? '(예열중)' : '(정상)'}`
+        : '측정 대기';
+    }
+    if ($('robot-vision-summary')) {
+      $('robot-vision-summary').textContent = v.summary || '탐지 대기';
+    }
+    if ($('robot-vision-perf')) {
+      $('robot-vision-perf').textContent = v.inference_ms != null
+        ? `${v.inference_ms} ms (${v.fps || 0} FPS)`
+        : (v.mode_label || '대기');
     }
 
-    const records = ins.records || [];
     if ($('robot-record-count')) $('robot-record-count').textContent = records.length;
     if ($('robot-stats-text')) {
-      $('robot-stats-text').textContent = `총 ${ins.total_count || 0}건 · 이상 감지 ${ins.abnormal_count || 0}건 · 정상 확인 ${ins.normal_count || 0}건`;
+      $('robot-stats-text').textContent = `총 ${ins.total_count || 0}건 · 이상 ${ins.abnormal_count || 0}건 · 정상 ${ins.normal_count || 0}건 (클릭 시 실시간 영상과 동시 확인)`;
     }
     if ($('robot-item-breakdown')) {
       const box = $('robot-item-breakdown');
@@ -219,7 +353,7 @@
       for (const [name, count] of Object.entries(byItem)) {
         const badge = document.createElement('span');
         badge.className = 'item-pill';
-        badge.dataset.warn = String(name !== '사람');
+        badge.dataset.warn = String(['안전모 미 착용', '벽면 균열', '노출 철근', '누수 흔적'].includes(name));
         badge.textContent = `${name} ${count}건`;
         box.append(badge);
       }
@@ -245,17 +379,21 @@
           const timeEl = document.createElement('time');
           timeEl.textContent = rec.timestamp;
           const scoreEl = document.createElement('p');
-          scoreEl.textContent = `분석 일치/신뢰도 ${(rec.match_score * 100).toFixed(1)}%`;
+          scoreEl.textContent = `일치/신뢰도 ${(rec.match_score * 100).toFixed(1)}%`;
+          const thumb = document.createElement('img');
+          thumb.className = 'event-thumb';
+          thumb.src = rec.overview_url;
+          thumb.alt = `${rec.item} 캡처 미리보기`;
+          thumb.loading = 'lazy';
           const btn = document.createElement('button');
           btn.type = 'button';
-          btn.textContent = '전체·부분 캡처 분석 보기';
-          btn.addEventListener('click', () => selectRobotRecord(rec));
-          item.addEventListener('click', () => selectRobotRecord(rec));
-          item.append(title, timeEl, scoreEl, btn);
+          btn.textContent = '현재 실시간 영상 + 캡처 사진 함께 보기 ↗';
+          item.addEventListener('click', () => selectRobotRecord(rec, {focusLive: true}));
+          item.append(title, timeEl, scoreEl, thumb, btn);
           list.append(item);
         }
         const initial = records.find(x => x.event_id === selectedRobotEventId) || records[0];
-        if (initial) selectRobotRecord(initial);
+        if (initial) selectRobotRecord(initial, {focusLive: false});
       }
     }
   }
@@ -268,6 +406,7 @@
     } catch (_) {}
   }
 
+  let tickCount = 0;
   async function poll() {
     if(!document.hidden) {
       try {
@@ -281,7 +420,8 @@
         $('alarm-detail').textContent='최신 분석 상태를 확인할 수 없습니다. 자동으로 다시 연결합니다.';
         $('connection').textContent='응답 없음';
       }
-      if (activeTab === 'robot') fetchRobot();
+      tickCount++;
+      if (activeTab === 'robot' || tickCount % 2 === 1) fetchRobot();
     }
     setTimeout(poll,1000);
   }
