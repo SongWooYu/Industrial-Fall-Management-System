@@ -58,17 +58,29 @@ def _load_korean_font(size: int = 18):
 class SimpleWebSocket:
     """Minimal RFC 6455 client over stdlib socket (supports text and binary frames)."""
 
-    def __init__(self, host: str, port: int, path: str, timeout: float = 3.0):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        path: str,
+        timeout: float = 3.0,
+        headers: dict[str, str] | None = None,
+    ):
         self.sock = socket.create_connection((host, port), timeout=timeout)
         self.sock.settimeout(timeout)
         key = base64.b64encode(os.urandom(16)).decode("ascii")
+        extra_headers = ""
+        if headers:
+            for k, v in headers.items():
+                extra_headers += f"{k}: {v}\r\n"
         req = (
             f"GET {path} HTTP/1.1\r\n"
             f"Host: {host}:{port}\r\n"
             "Upgrade: websocket\r\n"
             "Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {key}\r\n"
-            "Sec-WebSocket-Version: 13\r\n\r\n"
+            "Sec-WebSocket-Version: 13\r\n"
+            f"{extra_headers}\r\n"
         )
         self.sock.sendall(req.encode("ascii"))
         header = b""
@@ -82,10 +94,10 @@ class SimpleWebSocket:
         status_line = head_bytes.splitlines()[0].decode("latin1", errors="replace")
         if " 101 " not in status_line:
             self.close()
-            if " 409 " in status_line:
-                raise PermissionError("다른 조종 클라이언트가 연결 중입니다 (HTTP 409)")
-            if " 403 " in status_line:
-                raise PermissionError("영상 토큰 인증 거부 (HTTP 403)")
+            if " 401 " in status_line or " 403 " in status_line:
+                raise PermissionError(f"관제 API 인증 실패 ({status_line})")
+            if " 409 " in status_line or " 429 " in status_line:
+                raise PermissionError(f"관제 연결 제한 초과 ({status_line})")
             raise ConnectionError(f"WebSocket handshake failed: {status_line}")
 
     def _read_exact(self, n: int) -> bytes:

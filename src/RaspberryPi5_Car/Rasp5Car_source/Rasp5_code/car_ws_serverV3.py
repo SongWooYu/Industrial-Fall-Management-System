@@ -2,6 +2,7 @@
 # Raspberry Pi 5 / USB 웹캠 / 엔코더 피드백 / Ctrl+C 종료
 # 안정화 수정판: 2026-10-21 / 업로드해주신 원본을 기준으로 수정
 import asyncio
+import hmac
 import json
 import math
 import multiprocessing as mp
@@ -103,7 +104,10 @@ frame_times = OrderedDict()
 owner_token = None
 control_socket = None
 video_sockets = set()
+monitor_sockets = set()
 control_leases = OrderedDict()
+MONITOR_API_KEY = os.environ.get('CAR_MONITOR_KEY', 'edge-monitor-v3-7f9a2c4e8b1d6f3a')
+MAX_MONITOR_CLIENTS = 4
 
 
 def stop_request():
@@ -854,6 +858,104 @@ async def video_handler(request):
     return ws
 
 
+def verify_monitor_auth(request):
+    if not MONITOR_API_KEY:
+        raise web.HTTPForbidden(text='관제 인증키가 설정되지 않았습니다.')
+    auth = request.headers.get('Authorization', '')
+    bearer = auth[7:].strip() if auth.startswith('Bearer ') else ''
+    candidate = request.headers.get('X-Monitor-Key') or bearer or request.query.get('key') or ''
+    if not candidate or not hmac.compare_digest(candidate, MONITOR_API_KEY):
+        raise web.HTTPUnauthorized(text='유효한 관제 인증키가 필요합니다.')
+    if owner_token and hmac.compare_digest(candidate, owner_token):
+        raise web.HTTPForbidden(text='조종 토큰은 관제 API에 사용할 수 없습니다.')
+
+
+def monitor_snapshot():
+    s = snapshot()
+    with lock:
+        pc_connected = bool(owner_token and control_socket is not None and not control_socket.closed)
+        control_fresh = bool(owner_token and monotonic() - command['time'] < 1)
+        cam_seq = camera['seq']
+        cam_age = max(0.0, monotonic() - camera['time']) if camera['time'] else None
+    s.update(
+        type='monitor_status',
+        pc_connected=pc_connected,
+        control_fresh=control_fresh,
+        camera_seq=cam_seq,
+        camera_age=cam_age,
+        port=PORT,
+    )
+    return s
+
+
+async def reject_monitor_commands(ws):
+    async for message in ws:
+        if message.type in (WSMsgType.TEXT, WSMsgType.BINARY):
+            await ws.close(code=1008, message=b'Monitor API is read-only')
+            break
+        if message.type == WSMsgType.ERROR:
+            break
+
+
+async def monitor_status_handler(request):
+    verify_monitor_auth(request)
+    if request.headers.get('Upgrade', '').lower() != 'websocket':
+        return web.json_response(monitor_snapshot())
+    if len(monitor_sockets) >= MAX_MONITOR_CLIENTS:
+        raise web.HTTPTooManyRequests(text='관제 연결 한도를 초과했습니다.')
+    ws = web.WebSocketResponse(heartbeat=5, max_msg_size=1024, timeout=1)
+    monitor_sockets.add(ws)
+    receiver = None
+    try:
+        await ws.prepare(request)
+        receiver = asyncio.create_task(reject_monitor_commands(ws))
+        while not ws.closed and not receiver.done() and not quit_event.is_set():
+            await asyncio.wait_for(ws.send_json(monitor_snapshot()), timeout=1)
+            await asyncio.sleep(0.2)
+    except (ConnectionError, asyncio.TimeoutError, RuntimeError):
+        pass
+    finally:
+        if receiver:
+            receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
+        monitor_sockets.discard(ws)
+        if ws.prepared:
+            with suppress(Exception):
+                await ws.close()
+    return ws
+
+
+async def monitor_video_handler(request):
+    verify_monitor_auth(request)
+    if len(monitor_sockets) >= MAX_MONITOR_CLIENTS:
+        raise web.HTTPTooManyRequests(text='관제 연결 한도를 초과했습니다.')
+    ws = web.WebSocketResponse(heartbeat=5, compress=False, max_msg_size=1024, timeout=1)
+    monitor_sockets.add(ws)
+    receiver = None
+    try:
+        await ws.prepare(request)
+        receiver = asyncio.create_task(reject_monitor_commands(ws))
+        last_seq = -1
+        while not ws.closed and not receiver.done() and not quit_event.is_set():
+            with lock:
+                seq, jpeg = camera['seq'], camera['jpeg']
+            if jpeg and seq != last_seq:
+                await asyncio.wait_for(ws.send_bytes(struct.pack('!Q', seq) + jpeg), 1)
+                last_seq = seq
+            await asyncio.sleep(0.03)
+    except (ConnectionError, asyncio.TimeoutError, RuntimeError):
+        pass
+    finally:
+        if receiver:
+            receiver.cancel()
+            await asyncio.gather(receiver, return_exceptions=True)
+        monitor_sockets.discard(ws)
+        if ws.prepared:
+            with suppress(Exception):
+                await ws.close()
+    return ws
+
+
 async def startup(app):
     # spawn: GPIO/I2C 핸들을 fork로 공유하지 않습니다.
     context = mp.get_context('spawn')
@@ -890,7 +992,7 @@ async def startup(app):
 async def shutdown(app):
     stop_request()
     quit_event.set()
-    sockets = list(video_sockets)
+    sockets = list(video_sockets) + list(monitor_sockets)
     if control_socket is not None:
         sockets.append(control_socket)
     await asyncio.gather(*[s.close(code=1001) for s in sockets], return_exceptions=True)
@@ -927,6 +1029,8 @@ if __name__ == '__main__':
     app = web.Application()
     app.router.add_get('/control', control_handler)
     app.router.add_get('/video', video_handler)
+    app.router.add_get('/monitor/status', monitor_status_handler)
+    app.router.add_get('/monitor/video', monitor_video_handler)
     app.on_startup.append(startup)
     app.on_shutdown.append(shutdown)
     app.on_cleanup.append(cleanup)

@@ -1,8 +1,8 @@
 """Read-only telemetry, live WebSocket video stream, and AI analysis monitor for the Safety Exploration Robot.
 
-Connects to 192.168.1.206:5000 (/control with STOP-only heartbeats and /video) when available,
-falls back to non-intrusive SSH state reading if another controller is active, and runs
-real-time safety helmet / structural defect / object analysis without modifying robot source files.
+Connects to 192.168.1.206:5000 (/monitor/video and /monitor/status with X-Monitor-Key) completely
+independently of the Windows controller PC (/control and /video), and runs real-time safety helmet /
+structural defect / object analysis without issuing any control commands.
 """
 from __future__ import annotations
 
@@ -182,6 +182,7 @@ class RobotMonitor:
         self.port = int(os.environ.get("ROBOT_CAR_PORT", str(port)))
         self.user = os.environ.get("ROBOT_CAR_USER", user)
         self.password = os.environ.get("ROBOT_CAR_PASSWORD", password)
+        self.monitor_key = os.environ.get("CAR_MONITOR_KEY", "edge-monitor-v3-7f9a2c4e8b1d6f3a")
         self.poll_remote = poll_remote
 
         self._lock = threading.Lock()
@@ -325,20 +326,27 @@ class RobotMonitor:
                 time.sleep(0.5)
                 continue
 
-            ctrl_ws: SimpleWebSocket | None = None
+            stat_ws: SimpleWebSocket | None = None
             vid_ws: SimpleWebSocket | None = None
             try:
-                ctrl_ws = SimpleWebSocket(self.host, self.port, "/control", timeout=2.5)
-                _, raw_hello = ctrl_ws.recv()
-                hello = json.loads(raw_hello.decode("utf-8"))
-                token = hello.get("token")
-                if not token:
-                    raise ConnectionError("토큰 없음")
-
-                vid_ws = SimpleWebSocket(self.host, self.port, f"/video?token={token}", timeout=2.5)
+                auth_headers = {"X-Monitor-Key": self.monitor_key}
+                stat_ws = SimpleWebSocket(
+                    self.host,
+                    self.port,
+                    "/monitor/status",
+                    timeout=3.0,
+                    headers=auth_headers,
+                )
+                vid_ws = SimpleWebSocket(
+                    self.host,
+                    self.port,
+                    "/monitor/video",
+                    timeout=3.0,
+                    headers=auth_headers,
+                )
                 with self._lock:
                     self._video_state = "streaming"
-                    self._video_message = "실시간 영상 수신 중 (웹 관제 클라이언트 연결됨 · 구동 잠금)"
+                    self._video_message = "실시간 관제 영상 수신 중 (/monitor/video · 조종 PC와 동시 작동)"
 
                 stop_video = threading.Event()
 
@@ -370,30 +378,18 @@ class RobotMonitor:
                 vt = threading.Thread(target=video_reader, daemon=True)
                 vt.start()
 
-                lease = ""
                 while not stop_video.is_set() and not self._stop_event.is_set():
                     with self._lock:
                         if not self.stream_enabled:
                             break
-                        ack_seq = self._latest_seq
-                    # Strictly send STOP with 0 PWM so the robot never moves from web client
-                    ctrl_ws.send_json({
-                        "direction": "STOP",
-                        "pwm": 0,
-                        "frame": ack_seq,
-                        "lease": lease,
-                        "mode": "precision",
-                        "distance_cm": 1,
-                        "move_id": "0",
-                        "stop_id": 0,
-                    })
-                    opcode, payload = ctrl_ws.recv()
+                    opcode, payload = stat_ws.recv()
                     if opcode == 0x1:
                         status = json.loads(payload.decode("utf-8"))
-                        lease = str(status.get("lease", ""))
                         direction = str(status.get("direction", "STOP"))
-                        reason = str(status.get("reason", "STOP"))
+                        reason = str(status.get("reason", "WAITING"))
                         distance_cm = status.get("distance_cm")
+                        pc_connected = bool(status.get("pc_connected", False))
+                        control_fresh = bool(status.get("control_fresh", False))
                         with self._lock:
                             self._telemetry = {
                                 "online": True,
@@ -402,13 +398,14 @@ class RobotMonitor:
                                 "direction": direction,
                                 "direction_label": DIRECTION_LABELS.get(direction, direction),
                                 "pwm": status.get("pwm", 0),
+                                "wheel_pwm": status.get("wheel_pwm", [0, 0, 0, 0]),
                                 "rpm": status.get("rpm", [0, 0, 0, 0]),
                                 "distance_cm": distance_cm,
                                 "obstacle_warning": bool(distance_cm is not None and distance_cm <= 30.0),
-                                "pc_connected": False,
-                                "control_fresh": True,
+                                "pc_connected": pc_connected,
+                                "control_fresh": control_fresh,
                                 "reason": reason,
-                                "reason_label": "웹 관제 모니터링 연결 중 (정지 유지)" if reason == "STOP" else REASON_LABELS.get(reason, reason),
+                                "reason_label": REASON_LABELS.get(reason, reason),
                                 "motor_error": status.get("motor_error", ""),
                                 "camera_error": status.get("camera_error", ""),
                                 "dht22": status.get("dht22"),
@@ -416,32 +413,20 @@ class RobotMonitor:
                                 "diagnostics": self._telemetry.get("diagnostics", {}),
                                 "sampled_at": datetime.now(timezone.utc).isoformat(),
                             }
-                    time.sleep(0.05)
                 stop_video.set()
                 vt.join(timeout=1.0)
-            except PermissionError as exc:
-                with self._lock:
-                    self._video_state = "conflict_pc_active"
-                    self._video_message = "외부 Windows 조종 PC가 로봇을 제어 중입니다 (조종 PC 해제 시 실시간 영상이 자동 연결됩니다)"
-                    self._raw_jpeg = _make_placeholder_jpeg(
-                        "EXTERNAL CONTROLLER ACTIVE",
-                        "Windows PC controller is connected to 192.168.1.206:5000",
-                    )
-                    self._annotated_jpeg = self._raw_jpeg
-                self._trigger_ssh_poll_if_due()
-                time.sleep(2.5)
             except Exception as exc:
                 with self._lock:
                     if self.stream_enabled:
                         self._video_state = "reconnecting"
-                        self._video_message = f"로봇 영상 연결 재시도 중 ({exc})"
+                        self._video_message = f"로봇 관제 영상 연결 재시도 중 ({exc})"
                 self._trigger_ssh_poll_if_due()
                 time.sleep(2.0)
             finally:
                 if vid_ws is not None:
                     vid_ws.close()
-                if ctrl_ws is not None:
-                    ctrl_ws.close()
+                if stat_ws is not None:
+                    stat_ws.close()
 
     def _vision_loop(self) -> None:
         while not self._stop_event.is_set():

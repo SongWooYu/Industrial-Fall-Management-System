@@ -251,6 +251,39 @@ class StandaloneTest(unittest.TestCase):
         self.assertEqual(cfg_data["vision"]["mode"], "helmet")
         self.assertFalse(cfg_data["robot"]["stream_enabled"])
 
+    def test_car_ws_server_monitor_endpoints_are_isolated_from_control(self):
+        import ast
+        from pathlib import Path
+
+        server_path = Path("src/RaspberryPi5_Car/Rasp5Car_source/Rasp5_code/car_ws_serverV3.py")
+        source = server_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        funcs = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        for name in (
+            "verify_monitor_auth",
+            "monitor_snapshot",
+            "reject_monitor_commands",
+            "monitor_status_handler",
+            "monitor_video_handler",
+        ):
+            self.assertIn(name, funcs, f"Missing {name} in car_ws_serverV3.py")
+
+        for handler_name in ("reject_monitor_commands", "monitor_status_handler", "monitor_video_handler"):
+            handler_src = ast.get_source_segment(source, funcs[handler_name]) or ""
+            self.assertNotIn("stop_request", handler_src)
+            self.assertNotIn("control_socket", handler_src)
+            self.assertNotIn("video_sockets", handler_src)
+
+        monitor_client_src = Path("src/industrial_fall/robot_monitor.py").read_text(encoding="utf-8")
+        self.assertIn('"/monitor/video"', monitor_client_src)
+        self.assertIn('"/monitor/status"', monitor_client_src)
+        self.assertIn('"X-Monitor-Key"', monitor_client_src)
+        self.assertNotIn("send_json", monitor_client_src)
+
 
 if __name__ == "__main__":
     unittest.main()

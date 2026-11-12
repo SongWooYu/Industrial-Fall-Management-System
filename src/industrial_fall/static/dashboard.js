@@ -294,16 +294,22 @@
       $('robot-updated').textContent = `갱신 ${new Date().toLocaleTimeString('ko-KR', {hour12:false})}`;
     }
     if ($('robot-pc-badge')) {
-      $('robot-pc-badge').textContent = r.video_online
-        ? 'Pi5 웹 클라이언트 영상 연결됨'
-        : (r.pc_connected ? '외부 Windows 조종 PC 연결됨' : '대기 중');
+      if (r.video_online && r.pc_connected) {
+        $('robot-pc-badge').textContent = '조종 PC 주행 중 + Edge 관제 동시 수신';
+      } else if (r.video_online) {
+        $('robot-pc-badge').textContent = 'Edge 관제 영상 수신 중 (/monitor/video)';
+      } else if (r.pc_connected) {
+        $('robot-pc-badge').textContent = '외부 Windows 조종 PC 연결됨';
+      } else {
+        $('robot-pc-badge').textContent = '대기 중';
+      }
     }
     if ($('robot-stream-toggle')) {
       const enabled = r.stream_enabled !== false;
       $('robot-stream-toggle').setAttribute('aria-pressed', String(enabled));
       $('robot-stream-toggle').textContent = enabled
-        ? '웹 실시간 영상 수신 중 (PC 조종 양보 시 클릭)'
-        : '웹 영상 일시정지됨 (클릭하여 다시 연결)';
+        ? '실시간 관제 영상 수신 중 (일시정지)'
+        : '관제 영상 일시정지됨 (다시 연결)';
     }
     if ($('robot-live-pill')) {
       $('robot-live-pill').textContent = r.video_online ? 'LIVE 수신 중' : (r.video_state === 'conflict_pc_active' ? '외부 PC 조종 중' : '연결 대기');
