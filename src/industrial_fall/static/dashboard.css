@@ -41,8 +41,16 @@
 
 .robot-3col-layout{display:grid;grid-template-columns:minmax(320px,1.1fr) minmax(340px,1.15fr) minmax(320px,1fr);gap:16px;align-items:stretch}
 .robot-col-live,.robot-col-selected,.robot-col-history{display:flex;flex-direction:column;height:660px;min-width:0}
-.robot-live-body,.robot-selected-body{padding:0 16px 14px;flex:1;display:flex;flex-direction:column;gap:12px;min-height:0;overflow:hidden}
-.robot-video-wrap{aspect-ratio:4/3;width:100%;max-height:460px;margin:auto;border-radius:8px;border:1px solid var(--line);background:#000;position:relative;overflow:hidden}
+.robot-analysis-toolbar{display:flex;align-items:center;gap:8px;padding:0 16px 10px;flex-wrap:wrap;flex-shrink:0}
+.robot-analysis-toolbar select{flex:1;min-width:170px;padding:6px 10px;font-size:12px}
+.robot-inline-check{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink);cursor:pointer;white-space:nowrap;user-select:none}
+.robot-analysis-toolbar button{padding:6px 11px;font-size:12px}
+.primary-btn{background:var(--accent);color:#06121e;border-color:var(--accent);font-weight:700}
+.robot-live-body,.robot-selected-body{padding:0 16px 12px;flex:1;display:flex;flex-direction:column;gap:10px;min-height:0;overflow:hidden}
+.robot-video-wrap{aspect-ratio:4/3;width:100%;max-height:420px;margin:auto;border-radius:8px;border:1px solid var(--line);background:#000;position:relative;overflow:hidden}
+.robot-vision-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 10px;border-radius:6px;background:var(--surface);border:1px solid var(--line);font-size:12px;flex-shrink:0}
+#robot-vision-summary{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.robot-dl-link{padding:4px 8px;font-size:11px;white-space:nowrap;flex-shrink:0}
 .robot-stream{width:100%;height:100%;object-fit:contain;display:block;background:#000}
 .robot-video-overlay{position:absolute;inset:0;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:20px;background:rgba(8,15,26,.86);color:#eef4fb;gap:6px}
 .robot-video-overlay[hidden]{display:none!important}

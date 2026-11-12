@@ -29,16 +29,18 @@ import sqlite3
 import struct
 import threading
 import time
+import uuid
 from urllib.error import HTTPError, URLError
 from urllib.request import ProxyHandler, Request, build_opener
 from typing import Any
 
 import cv2
 import numpy as np
-from flask import Response, abort, jsonify, request
+from flask import Response, abort, jsonify, request, send_file
 
 from .config import _load_dotenv
 from .request_origin import same_origin_request
+from .robot_vision import ANALYSIS_MODES, RobotVisionAnalyzer
 from .robot_ws import (
     ANOMALY_TARGETS,
     DEFECT_TARGETS,
@@ -85,6 +87,7 @@ REASON_LABELS = {
 
 SOURCE_LABELS = {
     "windows_client": "Windows 탐사 클라이언트",
+    "edge_analysis": "Edge 실시간 분석",
     "robot_event": "로봇 자체 탐사",
     "legacy_import": "기존 DB 보관본",
 }
@@ -278,8 +281,19 @@ class RobotMonitor:
         self._video_state: str = "idle"
         self._video_message: str = "대기 중 (로봇 관제 탭을 열면 실시간 영상을 연결합니다)"
         self._raw_jpeg: bytes = _make_placeholder_jpeg("ROBOT CAMERA", "Open Robot Monitor tab to stream")
+        self._annotated_jpeg: bytes = self._raw_jpeg
         self._latest_seq: int = -1
+        self._analyzed_seq: int = -1
         self._latest_frame_time: float = 0.0
+
+        self._analysis_mode: str = "off"
+        self._auto_record: bool = True
+        self._analyzer: RobotVisionAnalyzer | None = None
+        self._latest_detections: list[dict[str, Any]] = []
+        self._vision_summary: str = "원본 영상 모드 (분석 끔)"
+        self._vision_inference_ms: float | None = None
+        self._confirm_streak: dict[str, int] = {}
+        self._last_auto_saved_at: dict[str, float] = {}
 
         self._last_status_poll: float = 0.0
         self._status_polling: bool = False
@@ -288,6 +302,7 @@ class RobotMonitor:
 
         if self.poll_remote:
             threading.Thread(target=self._video_ws_loop, daemon=True).start()
+            threading.Thread(target=self._on_demand_analysis_loop, daemon=True).start()
 
     def _init_events_db(self) -> None:
         try:
@@ -302,12 +317,37 @@ class RobotMonitor:
                         item TEXT NOT NULL,
                         abnormal TEXT NOT NULL CHECK(abnormal IN ('이상', '정상')),
                         match_score REAL NOT NULL,
-                        source TEXT NOT NULL CHECK(source IN ('windows_client', 'robot_event')),
+                        source TEXT NOT NULL,
                         detail_file TEXT NOT NULL,
                         overview_file TEXT NOT NULL,
                         received_at TEXT NOT NULL
                     )"""
                 )
+                # Migrate older CHECK constraint on source if needed
+                sql_row = conn.execute(
+                    "SELECT sql FROM sqlite_master WHERE type='table' AND name='robot_inspection_events'"
+                ).fetchone()
+                if sql_row and "edge_analysis" not in (sql_row[0] or "") and "CHECK(source IN" in (sql_row[0] or ""):
+                    conn.execute(
+                        """CREATE TABLE robot_inspection_events_v2 (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            event_id TEXT NOT NULL UNIQUE,
+                            event_date TEXT NOT NULL,
+                            event_time TEXT NOT NULL,
+                            item TEXT NOT NULL,
+                            abnormal TEXT NOT NULL CHECK(abnormal IN ('이상', '정상')),
+                            match_score REAL NOT NULL,
+                            source TEXT NOT NULL,
+                            detail_file TEXT NOT NULL,
+                            overview_file TEXT NOT NULL,
+                            received_at TEXT NOT NULL
+                        )"""
+                    )
+                    conn.execute(
+                        "INSERT INTO robot_inspection_events_v2 SELECT * FROM robot_inspection_events"
+                    )
+                    conn.execute("DROP TABLE robot_inspection_events")
+                    conn.execute("ALTER TABLE robot_inspection_events_v2 RENAME TO robot_inspection_events")
                 conn.execute(
                     "CREATE INDEX IF NOT EXISTS idx_robot_events_ts "
                     "ON robot_inspection_events(event_date DESC, event_time DESC, id DESC)"
@@ -568,7 +608,7 @@ class RobotMonitor:
         if abnormal not in {"이상", "정상"}:
             abnormal = "이상" if item in ANOMALY_TARGETS else "정상"
         source = str(payload.get("source") or "windows_client").strip()
-        if source not in {"windows_client", "robot_event"}:
+        if source not in {"windows_client", "robot_event", "edge_analysis"}:
             raise ValueError("허용되지 않은 데이터 출처(source)입니다.")
 
         event_date = str(payload.get("event_date") or "").strip()
@@ -755,11 +795,165 @@ class RobotMonitor:
         except Exception:
             return None
 
-    def wait_for_frame(self, last_seq: int, timeout: float = 0.5) -> tuple[int, bytes, str]:
+    def _get_analyzer(self) -> RobotVisionAnalyzer:
+        if self._analyzer is None:
+            self._analyzer = RobotVisionAnalyzer(self.source_dir)
+        return self._analyzer
+
+    def set_analysis_config(self, mode: str | None = None, auto_record: bool | None = None) -> dict[str, Any]:
+        with self._lock:
+            if mode is not None and mode in ANALYSIS_MODES:
+                self._analysis_mode = mode
+                if mode == "off":
+                    self._latest_detections = []
+                    self._vision_summary = "원본 영상 모드 (분석 끔)"
+                    self._vision_inference_ms = None
+                    self._confirm_streak.clear()
+                else:
+                    self._vision_summary = f"{ANALYSIS_MODES[mode]} 실행 중"
+            if auto_record is not None:
+                self._auto_record = bool(auto_record)
+            self._wake_event.set()
+            self._frame_cond.notify_all()
+        return self.snapshot()
+
+    def _record_frame_detection(
+        self,
+        frame_bgr: np.ndarray,
+        annotated_bgr: np.ndarray,
+        det: dict[str, Any],
+        source: str = "edge_analysis",
+    ) -> dict[str, Any] | None:
+        h, w = frame_bgr.shape[:2]
+        x1, y1, x2, y2 = det.get("box", (0, 0, w, h))
+        x1 = max(0, min(w - 2, int(x1)))
+        y1 = max(0, min(h - 2, int(y1)))
+        x2 = max(x1 + 2, min(w, int(x2)))
+        y2 = max(y1 + 2, min(h, int(y2)))
+        crop_bgr = frame_bgr[y1:y2, x1:x2]
+        if crop_bgr.size == 0:
+            crop_bgr = frame_bgr
+
+        ok_det, det_buf = cv2.imencode(".jpg", crop_bgr, [cv2.IMWRITE_JPEG_QUALITY, 90])
+        ok_ov, ov_buf = cv2.imencode(".jpg", annotated_bgr, [cv2.IMWRITE_JPEG_QUALITY, 88])
+        if not (ok_det and ok_ov):
+            return None
+
+        now_local = datetime.now()
+        event_id = uuid.uuid4().hex
+        item = str(det.get("label") or "사람")
+        if item not in VALID_INSPECTION_ITEMS:
+            item = "사람"
+        abnormal = "이상" if item in ANOMALY_TARGETS else "정상"
+        score = float(det.get("score") or 0.85)
+        payload = {
+            "event_id": event_id,
+            "event_date": now_local.strftime("%Y-%m-%d"),
+            "event_time": now_local.strftime("%H:%M:%S"),
+            "item": item,
+            "abnormal": abnormal,
+            "match_score": min(1.0, max(0.0, score)),
+            "source": source,
+            "detail_jpeg_b64": base64.b64encode(det_buf.tobytes()).decode("ascii"),
+            "overview_jpeg_b64": base64.b64encode(ov_buf.tobytes()).decode("ascii"),
+        }
+        res, _code = self.ingest_event(payload)
+        return res
+
+    def capture_current_scene(self, item_override: str | None = None) -> dict[str, Any]:
+        with self._lock:
+            raw_jpeg = self._raw_jpeg
+            mode = self._analysis_mode
+        if not raw_jpeg:
+            raise ValueError("현재 수신된 로봇 카메라 프레임이 없습니다.")
+        arr = np.frombuffer(raw_jpeg, dtype=np.uint8)
+        frame_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        if frame_bgr is None:
+            raise ValueError("카메라 프레임을 디코딩할 수 없습니다.")
+        analyzer = self._get_analyzer()
+        eval_mode = mode if mode != "off" else "all"
+        detections, annotated_bgr = analyzer.analyze(frame_bgr, mode=eval_mode)
+        if detections:
+            chosen = detections[0]
+        else:
+            h, w = frame_bgr.shape[:2]
+            label = item_override if item_override in VALID_INSPECTION_ITEMS else "사람"
+            chosen = {
+                "label": label,
+                "abnormal": "이상" if label in ANOMALY_TARGETS else "정상",
+                "score": 0.80,
+                "box": (int(w * 0.15), int(h * 0.15), int(w * 0.85), int(h * 0.85)),
+            }
+        res = self._record_frame_detection(frame_bgr, annotated_bgr, chosen, source="edge_analysis")
+        if not res:
+            raise ValueError("캡처 이미지 저장에 실패했습니다.")
+        return res
+
+    def _on_demand_analysis_loop(self) -> None:
+        last_seq = -1
+        while not self._stop_event.is_set():
+            with self._lock:
+                mode = self._analysis_mode
+                auto_rec = self._auto_record
+                seq = self._latest_seq
+                raw_jpeg = self._raw_jpeg
+            if mode == "off" or not self._should_keep_video_ws() or seq < 0 or seq == last_seq:
+                time.sleep(0.12)
+                continue
+
+            last_seq = seq
+            try:
+                arr = np.frombuffer(raw_jpeg, dtype=np.uint8)
+                frame_bgr = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+                if frame_bgr is None:
+                    continue
+                t0 = time.monotonic()
+                analyzer = self._get_analyzer()
+                detections, annotated_bgr = analyzer.analyze(frame_bgr, mode=mode)
+                elapsed_ms = round((time.monotonic() - t0) * 1000.0, 1)
+                ok, buf = cv2.imencode(".jpg", annotated_bgr, [cv2.IMWRITE_JPEG_QUALITY, 82])
+                annotated_bytes = buf.tobytes() if ok else raw_jpeg
+
+                now = time.monotonic()
+                if detections:
+                    top = detections[0]
+                    summary = f"[{top['abnormal']}] {top['label']} ({int(top['score'] * 100)}%)"
+                else:
+                    summary = f"{ANALYSIS_MODES.get(mode, mode)} · 특이사항 없음"
+
+                with self._lock:
+                    self._annotated_jpeg = annotated_bytes
+                    self._analyzed_seq = seq
+                    self._latest_detections = detections
+                    self._vision_summary = summary
+                    self._vision_inference_ms = elapsed_ms
+                    self._frame_cond.notify_all()
+
+                if auto_rec and detections:
+                    seen_labels = {d["label"] for d in detections}
+                    for k in list(self._confirm_streak.keys()):
+                        if k not in seen_labels:
+                            self._confirm_streak[k] = 0
+                    for det in detections:
+                        lbl = det["label"]
+                        self._confirm_streak[lbl] = self._confirm_streak.get(lbl, 0) + 1
+                        last_saved = self._last_auto_saved_at.get(lbl, 0.0)
+                        if self._confirm_streak[lbl] >= 2 and (now - last_saved) >= 25.0:
+                            self._last_auto_saved_at[lbl] = now
+                            self._record_frame_detection(frame_bgr, annotated_bgr, det, source="edge_analysis")
+                else:
+                    self._confirm_streak.clear()
+            except Exception:
+                LOGGER.exception("On-demand robot vision analysis error")
+                time.sleep(0.3)
+
+    def wait_for_frame(self, last_seq: int, timeout: float = 0.5, overlay: bool = False) -> tuple[int, bytes, str]:
         with self._lock:
             if self._latest_seq == last_seq:
                 self._frame_cond.wait(timeout=timeout)
-            return self._latest_seq, self._raw_jpeg, self._video_state
+            use_annotated = overlay and self._analysis_mode != "off" and self._analyzed_seq >= 0
+            frame = self._annotated_jpeg if use_annotated else self._raw_jpeg
+            return self._latest_seq, frame, self._video_state
 
     def snapshot(self) -> dict[str, Any]:
         self._poll_status_if_due()
@@ -779,6 +973,13 @@ class RobotMonitor:
                 "viewers": self._viewer_count,
                 "viewer_count": self._viewer_count,
                 "video_ws_connected": self._video_ws_connected,
+                "analysis_mode": self._analysis_mode,
+                "analysis_mode_label": ANALYSIS_MODES.get(self._analysis_mode, self._analysis_mode),
+                "analysis_active": self._analysis_mode != "off",
+                "auto_record": self._auto_record,
+                "vision_summary": self._vision_summary,
+                "vision_inference_ms": self._vision_inference_ms,
+                "detections": list(self._latest_detections),
             }
         history = self.load_history()
         return {
@@ -856,15 +1057,53 @@ def register_robot_routes(app, monitor: RobotMonitor) -> None:
         except ValueError as exc:
             return jsonify(error=str(exc)), 400
 
+    @app.post("/api/robot/analysis")
+    def robot_set_analysis():
+        if not same_origin_request():
+            abort(403)
+        payload = request.get_json(silent=True) or {}
+        mode = payload.get("mode")
+        auto_record = payload.get("auto_record")
+        if mode is not None and mode not in ANALYSIS_MODES:
+            return jsonify(error="유효하지 않은 분석 모드입니다."), 400
+        return jsonify(monitor.set_analysis_config(mode=mode, auto_record=auto_record))
+
+    @app.post("/api/robot/capture-now")
+    def robot_capture_now():
+        if not same_origin_request():
+            abort(403)
+        payload = request.get_json(silent=True) or {}
+        try:
+            res = monitor.capture_current_scene(item_override=payload.get("item"))
+            return jsonify({"ok": True, "capture": res, "status": monitor.snapshot()}), 201
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+
+    @app.get("/api/robot/download-client")
+    def robot_download_client():
+        client_path = monitor.pc_code_dir / "car_tk_clientV3.py"
+        if not client_path.is_file():
+            abort(404)
+        return send_file(
+            client_path,
+            mimetype="text/x-python",
+            as_attachment=True,
+            download_name="car_tk_clientV3.py",
+        )
+
     @app.get("/stream/robot")
     def robot_stream():
-        # Do not allow stale unrefreshed pages requesting legacy ?overlay=... to hold a live viewer slot
-        if "overlay" in request.args:
+        # Do not allow stale unrefreshed pages requesting legacy ?overlay=... without ?live=1 to hold a viewer slot
+        if "overlay" in request.args and request.args.get("live") != "1":
             return Response(
-                _make_placeholder_jpeg("REFRESH PAGE", "Edge AI overlay removed; refresh browser"),
+                _make_placeholder_jpeg("REFRESH PAGE", "Please refresh browser"),
                 mimetype="image/jpeg",
                 headers={"Cache-Control": "no-store"},
             )
+        req_mode = request.args.get("mode")
+        if req_mode in ANALYSIS_MODES:
+            monitor.set_analysis_config(mode=req_mode)
+        use_overlay = request.args.get("analysis") == "1" or (req_mode is not None and req_mode != "off")
         if not monitor.subscribe_video():
             return jsonify(error="동시 로봇 영상 시청 한도에 도달했습니다."), 503
 
@@ -884,7 +1123,11 @@ def register_robot_routes(app, monitor: RobotMonitor) -> None:
                 while not monitor._stop_event.is_set():
                     if _is_socket_closed(client_sock):
                         break
-                    seq, frame, _state = monitor.wait_for_frame(last_seq, timeout=0.25)
+                    seq, frame, _state = monitor.wait_for_frame(
+                        last_seq,
+                        timeout=0.25,
+                        overlay=use_overlay or monitor._analysis_mode != "off",
+                    )
                     if _is_socket_closed(client_sock):
                         break
                     now = time.monotonic()

@@ -17,9 +17,16 @@
     if (!img) return;
     if (activeTab !== 'robot' || document.hidden) return;
     if (!force && img.dataset.streaming === 'true') return;
+    const mode = $('robot-analysis-mode')?.value || 'off';
+    const analysisParam = mode !== 'off' ? '1' : '0';
     img.dataset.streaming = 'true';
     img.dataset.streamError = 'false';
-    img.src = `/stream/robot?t=${Date.now()}`;
+    img.src = `/stream/robot?live=1&analysis=${analysisParam}&mode=${encodeURIComponent(mode)}&t=${Date.now()}`;
+    if ($('robot-stream-label')) {
+      $('robot-stream-label').textContent = mode !== 'off'
+        ? `실시간 AI 분석 오버레이 (${mode})`
+        : '원본 MJPEG 릴레이 (/monitor/video)';
+    }
     updateRobotVideoOverlay();
   }
 
@@ -60,6 +67,49 @@
     stopRobotStream();
     startRobotStreamIfNeeded(true);
     fetchRobot();
+  });
+  async function updateRobotAnalysisConfig() {
+    const mode = $('robot-analysis-mode')?.value || 'off';
+    const autoRecord = Boolean($('robot-auto-record')?.checked);
+    try {
+      const resp = await fetch('/api/robot/analysis', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({mode, auto_record: autoRecord}),
+      });
+      if (resp.ok) showRobot(await resp.json());
+    } catch (_) {}
+  }
+  $('robot-analysis-mode')?.addEventListener('change', () => {
+    updateRobotAnalysisConfig();
+    if (activeTab === 'robot') {
+      startRobotStreamIfNeeded(true);
+    }
+  });
+  $('robot-auto-record')?.addEventListener('change', () => {
+    updateRobotAnalysisConfig();
+  });
+  $('robot-capture-now')?.addEventListener('click', async () => {
+    const btn = $('robot-capture-now');
+    if (btn) btn.disabled = true;
+    try {
+      const resp = await fetch('/api/robot/capture-now', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({}),
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.status) showRobot(data.status);
+        if (data.capture?.event_id) {
+          const rec = robotRecordsCache.find(x => x.event_id === data.capture.event_id);
+          if (rec) selectRobotRecord(rec);
+        }
+      }
+    } catch (_) {
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   });
   $('robot-live-stream')?.addEventListener('error', () => {
     const img = $('robot-live-stream');
@@ -226,6 +276,7 @@
 
   function shortSourceLabel(source, fallback) {
     if (source === 'windows_client') return 'Windows PC';
+    if (source === 'edge_analysis') return 'Edge 분석';
     if (source === 'robot_event') return '로봇 자체';
     if (source === 'legacy_import') return '기존 보관본';
     return fallback || '탐사 기록';
@@ -497,7 +548,17 @@
     }
 
     const hostPort = `${r.host || '192.168.1.206'}:${r.port || 5000}`;
-    setTextIfChanged($('robot-video-host-label'), `${hostPort} · /monitor/video 원본 (640×480)`);
+    setTextIfChanged($('robot-video-host-label'), `${hostPort} · /monitor/video (640×480)`);
+    if ($('robot-analysis-mode') && r.analysis_mode && document.activeElement !== $('robot-analysis-mode')) {
+      $('robot-analysis-mode').value = r.analysis_mode;
+    }
+    if ($('robot-auto-record') && typeof r.auto_record === 'boolean' && document.activeElement !== $('robot-auto-record')) {
+      $('robot-auto-record').checked = r.auto_record;
+    }
+    if ($('robot-vision-summary')) {
+      const infTxt = r.vision_inference_ms != null ? ` · ${r.vision_inference_ms}ms` : '';
+      setTextIfChanged($('robot-vision-summary'), `${r.vision_summary || '원본 영상 모드 (분석 끔)'}${infTxt}`);
+    }
 
     // 1. Robot connection cell
     const connCell = $('robot-cell-conn');

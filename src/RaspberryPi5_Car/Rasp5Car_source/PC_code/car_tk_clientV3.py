@@ -929,6 +929,16 @@ class ExplorationHistory:
                 attempts INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS edge_synced_events (
+                event_id TEXT PRIMARY KEY,
+                synced_at TEXT NOT NULL
+            )""")
+            db.execute("""INSERT OR IGNORE INTO edge_upload_queue (event_id, created_at, attempts)
+                SELECT h.event_id, h.event_date || ' ' || h.event_time, 0
+                FROM inspection_history h
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM edge_synced_events s WHERE s.event_id = h.event_id
+                )""")
 
     def record_inspection(self, record, event_id):
         """[예]로 승인된 16개 검색 항목만 저장하며 같은 이벤트는 중복 저장하지 않습니다."""
@@ -1029,6 +1039,8 @@ class ExplorationHistory:
 
     def mark_uploaded(self, event_id):
         with sqlite3.connect(self.db_path, timeout=5) as db:
+            db.execute('INSERT OR IGNORE INTO edge_synced_events (event_id, synced_at) VALUES (?, ?)',
+                       (event_id, datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
             db.execute('DELETE FROM edge_upload_queue WHERE event_id=?', (event_id,))
 
     def record_upload_error(self, event_id, error_text):
@@ -1042,8 +1054,11 @@ class EdgeEventUploader:
     """확정 저장된 탐사 이벤트(메타데이터 + 사진 2장)를 Edge 관제 서버로 비동기 전송합니다.
 
     네트워크 단절 시 SQLite edge_upload_queue에 보관했다가 재연결 시 중복 없이 재전송하며,
+    기존에 저장해 둔 미전송 로컬 DB 기록도 시작 시 자동으로 Edge 서버와 동기화합니다.
     차량 제어(/control) 및 영상(/video) 통신에는 전혀 관여하지 않습니다.
     """
+    DEFAULT_MONITOR_KEY = 'beebf41c7e5f583a94707c903912a968229dfb32e2b6e145'
+    DEFAULT_URLS = ('http://192.168.1.20:8080', 'https://vision.aihous.site')
 
     def __init__(self, history_store, edge_url=None, api_key=None):
         from urllib.request import Request, urlopen
@@ -1051,8 +1066,11 @@ class EdgeEventUploader:
         self._urlopen = urlopen
         self.history_store = history_store
         cfg = self._load_config()
-        self.edge_url = (edge_url or os.environ.get('EDGE_SERVER_URL') or cfg.get('edge_url') or 'http://192.168.1.20:8080').rstrip('/')
-        self.api_key = (api_key or os.environ.get('CAR_MONITOR_KEY') or cfg.get('car_monitor_key') or '').strip()
+        primary = (edge_url or os.environ.get('EDGE_SERVER_URL') or cfg.get('edge_url') or '').rstrip('/')
+        urls = [u.rstrip('/') for u in ([primary] if primary else []) + list(self.DEFAULT_URLS) if u]
+        self.edge_urls = list(dict.fromkeys(urls))
+        self.edge_url = self.edge_urls[0] if self.edge_urls else 'http://192.168.1.20:8080'
+        self.api_key = (api_key or os.environ.get('CAR_MONITOR_KEY') or cfg.get('car_monitor_key') or self.DEFAULT_MONITOR_KEY).strip()
         self.wake = threading.Event()
         self.closed = threading.Event()
         if self.history_store is not None:
@@ -1074,7 +1092,7 @@ class EdgeEventUploader:
         self.wake.set()
 
     def flush_once(self):
-        if self.history_store is None or not self.edge_url or not self.api_key:
+        if self.history_store is None or not self.edge_urls or not self.api_key:
             return 0
         sent = 0
         for row in self.history_store.pending_uploads():
@@ -1099,22 +1117,30 @@ class EdgeEventUploader:
                 'detail_jpeg_b64': base64.b64encode(detail_bytes).decode('ascii'),
                 'overview_jpeg_b64': base64.b64encode(overview_bytes).decode('ascii'),
             }).encode('utf-8')
-            req = self._Request(
-                f'{self.edge_url}/api/robot/events',
-                data=payload,
-                method='POST',
-                headers={
-                    'Content-Type': 'application/json',
-                    'X-Monitor-Key': self.api_key,
-                },
-            )
-            try:
-                with self._urlopen(req, timeout=5) as resp:
-                    if resp.status in (200, 201):
-                        self.history_store.mark_uploaded(event_id)
-                        sent += 1
-            except Exception as err:
-                self.history_store.record_upload_error(event_id, err)
+            delivered = False
+            last_err = None
+            for base_url in self.edge_urls:
+                req = self._Request(
+                    f'{base_url}/api/robot/events',
+                    data=payload,
+                    method='POST',
+                    headers={
+                        'Content-Type': 'application/json',
+                        'X-Monitor-Key': self.api_key,
+                        'User-Agent': 'SmartICT-CarClientV3/1.0',
+                    },
+                )
+                try:
+                    with self._urlopen(req, timeout=5) as resp:
+                        if resp.status in (200, 201):
+                            self.history_store.mark_uploaded(event_id)
+                            sent += 1
+                            delivered = True
+                            break
+                except Exception as err:
+                    last_err = err
+            if not delivered:
+                self.history_store.record_upload_error(event_id, last_err or 'upload failed')
                 break
         return sent
 
@@ -1176,7 +1202,7 @@ class CarApp:
         root.geometry('1490x1060')
         root.resizable(False, False)
         root.configure(bg='#edf2f7')
-        self.ip = tk.StringVar(value='192.168.0.113')
+        self.ip = tk.StringVar(value='192.168.1.206')
         self.port = tk.StringVar(value='5000')
         self.pwm = tk.DoubleVar(value=50)
         self.pwm_text = tk.StringVar(value='설정 PWM: 50%')
