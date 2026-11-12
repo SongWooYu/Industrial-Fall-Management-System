@@ -537,13 +537,18 @@
       for (const rec of records) seenRobotEventIds.add(rec.event_id);
       robotInitialRecordsLoaded = true;
     } else {
+      let newestArrived = null;
       for (const rec of records) {
         if (!seenRobotEventIds.has(rec.event_id)) {
           seenRobotEventIds.add(rec.event_id);
+          if (!newestArrived) newestArrived = rec;
           if (rec.abnormal === '이상' && rec.source !== 'legacy_import') {
             showRobotToast(rec);
           }
         }
+      }
+      if (newestArrived && robotPage === 1) {
+        selectedRobotEventId = newestArrived.event_id;
       }
     }
 

@@ -642,36 +642,61 @@ def diagnostic_worker():
 
 
 def camera_worker():
-    capture = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_V4L2)
-    try:
-        if not capture.isOpened():
-            raise RuntimeError('USB 웹캠을 열 수 없습니다.')
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        capture.set(cv2.CAP_PROP_FPS, 10)
-        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-        next_frame = 0.0
-        while not quit_event.is_set():
-            ok, frame = capture.read()
-            if not ok:
-                raise RuntimeError('USB 웹캠 읽기 실패')
-            now = monotonic()
-            if now < next_frame:
-                continue
-            next_frame = now + 0.1
-            ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
-            if ok:
-                with lock:
-                    camera.update(seq=camera['seq']+1, jpeg=encoded.tobytes(), time=now)
-                    frame_times[camera['seq']] = now
-                    while len(frame_times) > 40:
-                        frame_times.popitem(last=False)
-    except Exception as error:
-        with lock:
-            camera['error'] = str(error)
-        print(f'카메라 오류: {error}', flush=True)
-    finally:
-        capture.release()
+    last_logged_error = None
+    while not quit_event.is_set():
+        capture = None
+        try:
+            candidates = [CAMERA_INDEX] + [idx for idx in (0, 1, 2, 3) if idx != CAMERA_INDEX]
+            for idx in candidates:
+                cap = cv2.VideoCapture(idx, cv2.CAP_V4L2)
+                if cap.isOpened():
+                    capture = cap
+                    break
+                cap.release()
+            if capture is None or not capture.isOpened():
+                raise RuntimeError('USB 웹캠을 열 수 없습니다.')
+            capture.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            capture.set(cv2.CAP_PROP_FPS, 10)
+            capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            next_frame = 0.0
+            fail_streak = 0
+            while not quit_event.is_set():
+                ok, frame = capture.read()
+                if not ok:
+                    fail_streak += 1
+                    if fail_streak >= 5:
+                        raise RuntimeError('USB 웹캠 읽기 실패')
+                    quit_event.wait(0.05)
+                    continue
+                fail_streak = 0
+                now = monotonic()
+                if now < next_frame:
+                    continue
+                next_frame = now + 0.1
+                ok, encoded = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 65])
+                if ok:
+                    with lock:
+                        camera.update(seq=camera['seq']+1, jpeg=encoded.tobytes(), time=now, error='')
+                        frame_times[camera['seq']] = now
+                        while len(frame_times) > 40:
+                            frame_times.popitem(last=False)
+                    if last_logged_error is not None:
+                        print('USB 웹캠 복구 완료', flush=True)
+                        last_logged_error = None
+        except Exception as error:
+            msg = str(error)
+            with lock:
+                camera['error'] = msg
+            if msg != last_logged_error:
+                print(f'카메라 오류: {msg}', flush=True)
+                last_logged_error = msg
+        finally:
+            if capture is not None:
+                with suppress(Exception):
+                    capture.release()
+        if not quit_event.is_set():
+            quit_event.wait(1.5)
 
 
 def publish_lcd():

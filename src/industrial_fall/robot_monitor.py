@@ -571,7 +571,7 @@ class RobotMonitor:
                 telemetry = self._format_telemetry_from_raw(raw)
                 with self._lock:
                     self._telemetry = telemetry
-                    if telemetry["camera_error"] and self._video_state == "streaming":
+                    if telemetry["camera_error"] and self._video_state in ("streaming", "camera_error", "connecting"):
                         self._video_state = "camera_error"
                         self._video_message = f"카메라 오류 ({telemetry['camera_error']})"
                 return
