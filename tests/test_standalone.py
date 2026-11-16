@@ -358,6 +358,63 @@ class StandaloneTest(unittest.TestCase):
                 ov_resp.close()
                 dt_resp.close()
 
+            # Default auto_record is False and video_message is concise ('미연결')
+            snap = mon.snapshot()["robot"]
+            self.assertFalse(snap["auto_record"])
+            self.assertEqual(snap["video_message"], "미연결")
+
+            # Memo & tags update & delete require same-origin and work end-to-end
+            origin_headers = {"Origin": "http://localhost"}
+            self.assertEqual(
+                app.post(f"/api/robot/events/{test_event_id}/memo", json={"memo": "조치 완료"}, headers={"Origin": "http://evil.example"}).status_code,
+                403,
+            )
+            memo_resp = app.post(
+                f"/api/robot/events/{test_event_id}/memo",
+                json={"memo": "현장 확인 완료"},
+                headers=origin_headers,
+            )
+            self.assertEqual(memo_resp.status_code, 200)
+            self.assertEqual(memo_resp.get_json()["memo"], "현장 확인 완료")
+
+            self.assertEqual(
+                app.post(f"/api/robot/events/{test_event_id}/tags", json={"tags": ["잘못된태그"]}, headers=origin_headers).status_code,
+                400,
+            )
+            tags_resp = app.post(
+                f"/api/robot/events/{test_event_id}/tags",
+                json={"tags": ["조치 필요", "현장 전달"]},
+                headers=origin_headers,
+            )
+            self.assertEqual(tags_resp.status_code, 200)
+            self.assertEqual(tags_resp.get_json()["tags"], ["조치 필요", "현장 전달"])
+
+            updated_rec = next(
+                r for r in app.get("/api/robot/status").get_json()["inspection"]["records"] if r["event_id"] == test_event_id
+            )
+            self.assertEqual(updated_rec["memo"], "현장 확인 완료")
+            self.assertEqual(updated_rec["tags"], ["조치 필요", "현장 전달"])
+
+            del_resp = app.delete(f"/api/robot/events/{test_event_id}", headers=origin_headers)
+            self.assertEqual(del_resp.status_code, 200)
+            remaining_ids = [r["event_id"] for r in app.get("/api/robot/status").get_json()["inspection"]["records"]]
+            self.assertNotIn(test_event_id, remaining_ids)
+            self.assertEqual(app.get(uploaded_rec["overview_url"]).status_code, 404)
+            self.assertEqual(app.delete(f"/api/robot/events/{test_event_id}", headers=origin_headers).status_code, 404)
+
+    def test_index_title_and_auto_record_default(self):
+        resp = self.client.get("/")
+        self.assertEqual(resp.headers.get("Cache-Control"), "no-store")
+        html = resp.get_data(as_text=True)
+        self.assertIn("감리용 산업안전 통합 관제 시스템", html)
+        self.assertIn('<input id="robot-auto-record" type="checkbox">', html)
+        self.assertIn('id="robot-sel-memo"', html)
+        self.assertIn('id="robot-sel-delete"', html)
+        self.assertIn('id="robot-tag-picker"', html)
+        self.assertIn('id="robot-tag-filter"', html)
+        self.assertIn("<span>출처</span>", html)
+        self.assertIn("<span>태그 · 메모</span>", html)
+
     def test_confirmed_incidents_are_not_evicted_by_suspected_flood(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             journal = EventJournal(limit=50, storage_dir=tmpdir)

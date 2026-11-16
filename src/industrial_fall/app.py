@@ -18,6 +18,7 @@ from .webrtc import register_webrtc_routes
 def create_app(pipeline, connection_history=None, robot_monitor=None):
     app = Flask(__name__)
     app.config["MAX_CONTENT_LENGTH"] = 4 * 1024 * 1024
+    app.config["TEMPLATES_AUTO_RELOAD"] = True
     history = connection_history if connection_history is not None else ConnectionHistory()
     robot = robot_monitor if robot_monitor is not None else RobotMonitor(Path(__file__).resolve().parents[2], poll_remote=False)
     app.extensions["connection_history"] = history
@@ -113,7 +114,7 @@ def create_app(pipeline, connection_history=None, robot_monitor=None):
 
     @app.after_request
     def no_cache(response):
-        if request.path.startswith("/api/"):
+        if request.path == "/" or request.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -121,7 +122,7 @@ def create_app(pipeline, connection_history=None, robot_monitor=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="산업안전 낙상관리시스템 · Pi5")
+    parser = argparse.ArgumentParser(description="감리용 산업안전 통합 관제 시스템 · Pi5")
     parser.add_argument("--config", default=str(Path(__file__).resolve().parents[2] / "config/cameras.yaml"))
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")

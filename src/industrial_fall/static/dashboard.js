@@ -297,10 +297,10 @@
     if (activeTab !== 'robot') {
       overlay.hidden = false;
       overlay.dataset.state = 'idle';
-      setTextIfChanged(titleEl, '실시간 영상 대기');
-      setTextIfChanged(detailEl, '로봇 관제 탭이 열리면 /monitor/video 스트림을 수신합니다.');
+      setTextIfChanged(titleEl, '영상 미연결');
+      setTextIfChanged(detailEl, '로봇 관제 화면에서 연결을 시도합니다.');
       if (pill) {
-        setTextIfChanged(pill, '대기');
+        setTextIfChanged(pill, '미연결');
         pill.dataset.live = 'false';
         pill.dataset.error = 'false';
       }
@@ -319,30 +319,20 @@
     }
 
     overlay.hidden = false;
-    let state = r.video_state || 'connecting';
-    let title = '실시간 영상 연결 중';
-    let detail = r.video_message || '로봇 /monitor/video 스트림 연결을 준비하고 있습니다.';
-    let pillText = '연결 중';
+    let state = r.video_state || 'idle';
+    let title = '영상 미연결';
+    let detail = '로봇 영상이 연결되지 않았습니다. 화면이 열려 있는 동안 연결을 시도합니다.';
+    let pillText = '미연결';
     let isError = false;
 
-    if (r.online === false || state === 'robot_offline') {
-      state = 'robot_offline';
-      title = '로봇 오프라인';
-      detail = r.video_message || `로봇 서버(${r.host || '192.168.1.206'}:${r.port || 5000})에 연결할 수 없습니다.`;
-      pillText = '로봇 오프라인';
-      isError = true;
-    } else if (r.camera_error || state === 'camera_error') {
+    if (r.camera_error || state === 'camera_error') {
       state = 'camera_error';
       title = '카메라 오류';
       detail = r.camera_error ? `로봇 카메라 오류: ${r.camera_error}` : (r.video_message || '로봇 카메라 프레임을 획득할 수 없습니다.');
       pillText = '카메라 오류';
       isError = true;
-    } else if (state === 'video_failed' || streamError) {
-      state = 'video_failed';
-      title = '영상 연결 실패';
-      detail = r.video_message || '로봇 /monitor/video 스트림 연결이 중단되었습니다. [영상 재연결]을 눌러 다시 시도할 수 있습니다.';
-      pillText = '영상 연결 실패';
-      isError = true;
+    } else {
+      state = 'idle';
     }
 
     overlay.dataset.state = state;
@@ -355,8 +345,53 @@
     }
   }
 
+  const EXCLUSIVE_STATUS_TAGS = new Set(['조치 필요', '조치 중', '조치 완료', '이상 없음']);
+
+  function updateTagPickerUI(tags, enabled) {
+    const active = new Set(Array.isArray(tags) ? tags : []);
+    document.querySelectorAll('#robot-tag-picker .robot-tag-btn').forEach(btn => {
+      const tag = btn.dataset.tag || '';
+      btn.disabled = !enabled;
+      btn.setAttribute('aria-pressed', String(enabled && active.has(tag)));
+    });
+  }
+
+  function clearSelectedRobotRecord() {
+    selectedRobotEventId = null;
+    document.querySelectorAll('#robot-records .robot-history-row').forEach(el => {
+      el.classList.remove('selected');
+    });
+    const badge = $('robot-selected-badge');
+    if (badge) {
+      setTextIfChanged(badge, '선택 대기');
+      delete badge.dataset.abnormal;
+    }
+    setTextIfChanged($('robot-sel-item'), '—');
+    setTextIfChanged($('robot-sel-time'), '—');
+    const abnEl = $('robot-sel-abnormal');
+    if (abnEl) {
+      setTextIfChanged(abnEl, '—');
+      abnEl.dataset.abnormal = '';
+    }
+    setTextIfChanged($('robot-sel-source'), '—');
+    setTextIfChanged($('robot-sel-score'), '—');
+    const overImg = $('robot-overview-img'), overEmpty = $('robot-overview-empty');
+    const detImg = $('robot-detail-img'), detEmpty = $('robot-detail-empty');
+    if (overImg && overEmpty) { overImg.hidden = true; overEmpty.hidden = false; }
+    if (detImg && detEmpty) { detImg.hidden = true; detEmpty.hidden = false; }
+    if ($('robot-sel-memo')) { $('robot-sel-memo').value = ''; $('robot-sel-memo').disabled = true; }
+    if ($('robot-memo-save')) $('robot-memo-save').disabled = true;
+    if ($('robot-sel-delete')) $('robot-sel-delete').disabled = true;
+    updateTagPickerUI([], false);
+    setTextIfChanged($('robot-memo-status'), '');
+  }
+
   function selectRobotRecord(rec) {
-    if (!rec) return;
+    if (!rec) {
+      clearSelectedRobotRecord();
+      return;
+    }
+    const changed = selectedRobotEventId !== rec.event_id;
     selectedRobotEventId = rec.event_id;
     document.querySelectorAll('#robot-records .robot-history-row').forEach(el => {
       el.classList.toggle('selected', el.dataset.eventId === rec.event_id);
@@ -382,6 +417,17 @@
       setTextIfChanged(scoreEl, scoreText);
       scoreEl.title = scoreText;
     }
+    const memoEl = $('robot-sel-memo');
+    if (memoEl) {
+      memoEl.disabled = false;
+      if (changed || document.activeElement !== memoEl) {
+        memoEl.value = rec.memo || '';
+      }
+    }
+    if ($('robot-memo-save')) $('robot-memo-save').disabled = false;
+    if ($('robot-sel-delete')) $('robot-sel-delete').disabled = false;
+    updateTagPickerUI(rec.tags || [], true);
+    if (changed) setTextIfChanged($('robot-memo-status'), '');
 
     const overImg = $('robot-overview-img'), overEmpty = $('robot-overview-empty');
     const detImg = $('robot-detail-img'), detEmpty = $('robot-detail-empty');
@@ -413,10 +459,106 @@
     }
   }
 
+  async function saveRobotMemo() {
+    if (!selectedRobotEventId) return;
+    const memoEl = $('robot-sel-memo');
+    const btn = $('robot-memo-save');
+    const memo = memoEl ? memoEl.value : '';
+    if (btn) btn.disabled = true;
+    setTextIfChanged($('robot-memo-status'), '저장 중...');
+    try {
+      const resp = await fetch(`/api/robot/events/${encodeURIComponent(selectedRobotEventId)}/memo`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({memo}),
+      });
+      if (!resp.ok) throw new Error();
+      const data = await resp.json();
+      setTextIfChanged($('robot-memo-status'), '저장됨');
+      if (data.status) showRobot(data.status);
+    } catch (_) {
+      setTextIfChanged($('robot-memo-status'), '저장 실패');
+    } finally {
+      if (btn) btn.disabled = !selectedRobotEventId;
+    }
+  }
+
+  async function deleteRobotRecord(eventId) {
+    if (!eventId) return;
+    if (!window.confirm('이 탐사 기록을 삭제하시겠습니까?')) return;
+    try {
+      const resp = await fetch(`/api/robot/events/${encodeURIComponent(eventId)}`, {
+        method: 'DELETE',
+      });
+      if (!resp.ok) return;
+      const data = await resp.json();
+      if (selectedRobotEventId === eventId) {
+        selectedRobotEventId = null;
+      }
+      if (data.status) {
+        robotHistoryKey = null;
+        showRobot(data.status);
+      }
+    } catch (_) {}
+  }
+
+  async function toggleRobotTag(tag) {
+    if (!selectedRobotEventId || !tag) return;
+    const rec = robotRecordsCache.find(x => x.event_id === selectedRobotEventId);
+    if (!rec) return;
+    const current = Array.isArray(rec.tags) ? [...rec.tags] : [];
+    let next;
+    if (current.includes(tag)) {
+      next = current.filter(t => t !== tag);
+    } else {
+      next = EXCLUSIVE_STATUS_TAGS.has(tag)
+        ? current.filter(t => !EXCLUSIVE_STATUS_TAGS.has(t))
+        : current;
+      next.push(tag);
+    }
+    updateTagPickerUI(next, true);
+    setTextIfChanged($('robot-memo-status'), '태그 저장 중...');
+    try {
+      const resp = await fetch(`/api/robot/events/${encodeURIComponent(selectedRobotEventId)}/tags`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({tags: next}),
+      });
+      if (!resp.ok) throw new Error();
+      const data = await resp.json();
+      setTextIfChanged($('robot-memo-status'), '태그 저장됨');
+      if (data.status) showRobot(data.status);
+    } catch (_) {
+      updateTagPickerUI(current, true);
+      setTextIfChanged($('robot-memo-status'), '태그 저장 실패');
+    }
+  }
+
+  document.querySelectorAll('#robot-tag-picker .robot-tag-btn').forEach(btn => {
+    btn.addEventListener('click', () => toggleRobotTag(btn.dataset.tag || ''));
+  });
+  $('robot-tag-filter')?.addEventListener('change', () => {
+    robotCurrentPage = 1;
+    renderRobotHistoryPage();
+  });
+
+  $('robot-memo-save')?.addEventListener('click', saveRobotMemo);
+  $('robot-sel-delete')?.addEventListener('click', () => deleteRobotRecord(selectedRobotEventId));
+
+  function getFilteredRobotRecords() {
+    const filter = $('robot-tag-filter')?.value || 'all';
+    if (filter === 'all') return robotRecordsCache;
+    if (filter === 'untagged') {
+      return robotRecordsCache.filter(r => !Array.isArray(r.tags) || r.tags.length === 0);
+    }
+    return robotRecordsCache.filter(r => Array.isArray(r.tags) && r.tags.includes(filter));
+  }
+
   function renderRobotHistoryPage() {
     const list = $('robot-records');
     if (!list) return;
-    const total = robotRecordsCache.length;
+    const filtered = getFilteredRobotRecords();
+    const total = filtered.length;
     const totalPages = Math.max(1, Math.ceil(total / ROBOT_PAGE_SIZE));
     if (robotCurrentPage > totalPages) robotCurrentPage = totalPages;
     if (robotCurrentPage < 1) robotCurrentPage = 1;
@@ -429,16 +571,17 @@
     if (!total) {
       const p = document.createElement('p');
       p.className = 'empty';
-      p.textContent = '저장된 탐사 분석 기록이 없습니다.';
+      p.textContent = robotRecordsCache.length ? '선택한 태그에 해당하는 기록이 없습니다.' : '저장된 탐사 분석 기록이 없습니다.';
       list.append(p);
       return;
     }
 
     const startIdx = (robotCurrentPage - 1) * ROBOT_PAGE_SIZE;
-    const pageItems = robotRecordsCache.slice(startIdx, startIdx + ROBOT_PAGE_SIZE);
+    const pageItems = filtered.slice(startIdx, startIdx + ROBOT_PAGE_SIZE);
     for (const rec of pageItems) {
-      const row = document.createElement('button');
-      row.type = 'button';
+      const row = document.createElement('div');
+      row.setAttribute('role', 'button');
+      row.tabIndex = 0;
       row.className = 'robot-history-row';
       if (rec.event_id === selectedRobotEventId) row.classList.add('selected');
       row.dataset.eventId = rec.event_id;
@@ -461,8 +604,52 @@
       srcSpan.textContent = shortSourceLabel(rec.source, rec.source_label);
       srcSpan.title = rec.source_label || '';
 
-      row.append(timeSpan, itemSpan, abnSpan, srcSpan);
+      const memoSpan = document.createElement('span');
+      memoSpan.className = 'robot-row-memo';
+      const tags = Array.isArray(rec.tags) ? rec.tags : [];
+      const memoText = (rec.memo || '').trim();
+      const hasMeta = tags.length > 0 || Boolean(memoText);
+      memoSpan.dataset.hasMemo = String(hasMeta);
+      const summaryParts = [];
+      if (tags.length) summaryParts.push(`[${tags.join(', ')}]`);
+      if (memoText) summaryParts.push(memoText);
+      memoSpan.title = summaryParts.join(' ') || '태그 · 메모 없음';
+      if (!hasMeta) {
+        memoSpan.textContent = '—';
+      } else {
+        if (tags.length) {
+          const tagBadge = document.createElement('span');
+          tagBadge.className = 'robot-row-tag';
+          tagBadge.dataset.tag = tags[0];
+          tagBadge.textContent = tags.length > 1 ? `${tags[0]} +${tags.length - 1}` : tags[0];
+          memoSpan.append(tagBadge);
+        }
+        if (memoText) {
+          const txt = document.createElement('span');
+          txt.className = 'robot-row-memo-text';
+          txt.textContent = memoText;
+          memoSpan.append(txt);
+        }
+      }
+
+      const delBtn = document.createElement('button');
+      delBtn.type = 'button';
+      delBtn.className = 'robot-row-delete';
+      delBtn.textContent = '삭제';
+      delBtn.title = '이 탐사 기록 삭제';
+      delBtn.addEventListener('click', e => {
+        e.stopPropagation();
+        deleteRobotRecord(rec.event_id);
+      });
+
+      row.append(timeSpan, itemSpan, abnSpan, srcSpan, memoSpan, delBtn);
       row.addEventListener('click', () => selectRobotRecord(rec));
+      row.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          selectRobotRecord(rec);
+        }
+      });
       list.append(row);
     }
   }
@@ -474,7 +661,7 @@
     }
   });
   $('robot-page-next')?.addEventListener('click', () => {
-    const totalPages = Math.max(1, Math.ceil(robotRecordsCache.length / ROBOT_PAGE_SIZE));
+    const totalPages = Math.max(1, Math.ceil(getFilteredRobotRecords().length / ROBOT_PAGE_SIZE));
     if (robotCurrentPage < totalPages) {
       robotCurrentPage += 1;
       renderRobotHistoryPage();
@@ -547,7 +734,7 @@
           }
         }
       }
-      if (newestArrived && robotPage === 1) {
+      if (newestArrived && robotCurrentPage === 1) {
         selectedRobotEventId = newestArrived.event_id;
       }
     }
@@ -581,14 +768,14 @@
     const pcCell = $('robot-cell-pc');
     if (pcCell) {
       pcCell.dataset.status = r.video_online ? 'ok' : (r.pc_connected ? 'ok' : '');
-      pcCell.title = r.video_message || '';
+      pcCell.title = r.video_online ? (r.video_message || '') : '미연결';
     }
-    setTextIfChanged($('robot-pc-badge'), r.pc_connected ? 'Windows 조종 PC 연결됨' : '조종 PC 미연결 (대기)');
+    setTextIfChanged($('robot-pc-badge'), r.pc_connected ? '조종 PC 연결됨' : '미연결');
     setTextIfChanged(
       $('robot-video-sub'),
       r.video_online
         ? `/monitor/video 수신 중 (관제 ${r.viewer_count || 1}명)`
-        : (activeTab === 'robot' ? (r.video_message || '영상 연결 준비 중') : '탭 비활성 · 영상 수신 대기')
+        : '영상 미연결'
     );
 
     // 3. Driving direction & PWM cell
@@ -646,7 +833,7 @@
       `총 ${ins.total_count || 0}건 · 이상 ${ins.abnormal_count || 0}건 · 정상 ${ins.normal_count || 0}건`
     );
 
-    const key = records.map(x => `${x.event_id}:${x.abnormal}:${x.source}`).join(',');
+    const key = records.map(x => `${x.event_id}:${x.abnormal}:${x.source}:${x.memo || ''}:${(x.tags || []).join('|')}`).join(',');
     if (robotHistoryKey !== key) {
       robotHistoryKey = key;
       robotRecordsCache = records;
@@ -656,6 +843,7 @@
       renderRobotHistoryPage();
       const selected = records.find(x => x.event_id === selectedRobotEventId) || records[0];
       if (selected) selectRobotRecord(selected);
+      else clearSelectedRobotRecord();
     }
   }
 

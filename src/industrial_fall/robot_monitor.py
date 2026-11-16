@@ -92,6 +92,36 @@ SOURCE_LABELS = {
     "legacy_import": "기존 DB 보관본",
 }
 
+VALID_SUPERVISOR_TAGS = (
+    "조치 필요",
+    "조치 중",
+    "조치 완료",
+    "재점검",
+    "현장 전달",
+    "이상 없음",
+)
+
+
+def _parse_tags(raw: Any) -> list[str]:
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw) if raw.strip() else []
+        except ValueError:
+            parsed = []
+    elif isinstance(raw, (list, tuple)):
+        parsed = list(raw)
+    else:
+        return []
+    seen: set[str] = set()
+    result: list[str] = []
+    allowed = set(VALID_SUPERVISOR_TAGS)
+    for item in parsed:
+        tag = str(item or "").strip()
+        if tag in allowed and tag not in seen:
+            seen.add(tag)
+            result.append(tag)
+    return result
+
 
 def _finite_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
@@ -279,7 +309,7 @@ class RobotMonitor:
         self._last_viewer_left_at: float = 0.0
         self._video_ws_connected: bool = False
         self._video_state: str = "idle"
-        self._video_message: str = "대기 중 (로봇 관제 탭을 열면 실시간 영상을 연결합니다)"
+        self._video_message: str = "미연결"
         self._raw_jpeg: bytes = _make_placeholder_jpeg("ROBOT CAMERA", "Open Robot Monitor tab to stream")
         self._annotated_jpeg: bytes = self._raw_jpeg
         self._latest_seq: int = -1
@@ -287,7 +317,7 @@ class RobotMonitor:
         self._latest_frame_time: float = 0.0
 
         self._analysis_mode: str = "off"
-        self._auto_record: bool = True
+        self._auto_record: bool = False
         self._analyzer: RobotVisionAnalyzer | None = None
         self._latest_detections: list[dict[str, Any]] = []
         self._vision_summary: str = "원본 영상 모드 (분석 끔)"
@@ -320,9 +350,34 @@ class RobotMonitor:
                         source TEXT NOT NULL,
                         detail_file TEXT NOT NULL,
                         overview_file TEXT NOT NULL,
-                        received_at TEXT NOT NULL
+                        received_at TEXT NOT NULL,
+                        memo TEXT NOT NULL DEFAULT '',
+                        tags TEXT NOT NULL DEFAULT '[]'
                     )"""
                 )
+                cols = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(robot_inspection_events)").fetchall()
+                }
+                if "memo" not in cols:
+                    conn.execute("ALTER TABLE robot_inspection_events ADD COLUMN memo TEXT NOT NULL DEFAULT ''")
+                if "tags" not in cols:
+                    conn.execute("ALTER TABLE robot_inspection_events ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+                conn.execute(
+                    """CREATE TABLE IF NOT EXISTS robot_event_overrides (
+                        event_id TEXT PRIMARY KEY,
+                        deleted INTEGER NOT NULL DEFAULT 0,
+                        memo TEXT NOT NULL DEFAULT '',
+                        tags TEXT NOT NULL DEFAULT '[]',
+                        updated_at TEXT NOT NULL
+                    )"""
+                )
+                ov_cols = {
+                    row[1]
+                    for row in conn.execute("PRAGMA table_info(robot_event_overrides)").fetchall()
+                }
+                if "tags" not in ov_cols:
+                    conn.execute("ALTER TABLE robot_event_overrides ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
                 # Migrate older CHECK constraint on source if needed
                 sql_row = conn.execute(
                     "SELECT sql FROM sqlite_master WHERE type='table' AND name='robot_inspection_events'"
@@ -421,7 +476,7 @@ class RobotMonitor:
             self._viewer_count += 1
             if self._video_state == "idle":
                 self._video_state = "connecting"
-                self._video_message = "로봇 카메라 영상 연결 중..."
+                self._video_message = "미연결"
             self._wake_event.set()
             return True
 
@@ -459,7 +514,7 @@ class RobotMonitor:
                     self._video_ws_connected = False
                     if self._viewer_count == 0:
                         self._video_state = "idle"
-                        self._video_message = "대기 중 (로봇 관제 탭을 열면 실시간 영상을 연결합니다)"
+                        self._video_message = "미연결"
                 self._wake_event.wait(timeout=0.5)
                 self._wake_event.clear()
                 continue
@@ -477,7 +532,7 @@ class RobotMonitor:
                 with self._lock:
                     if self._video_state not in ("streaming", "camera_error"):
                         self._video_state = "connecting"
-                        self._video_message = "로봇 카메라 연결 중..."
+                        self._video_message = "미연결"
 
                 vid_ws = SimpleWebSocket(
                     self.host,
@@ -526,7 +581,7 @@ class RobotMonitor:
                     cam_err = self._telemetry.get("camera_error", "")
                     if not online:
                         self._video_state = "robot_offline"
-                        self._video_message = "로봇 오프라인 (연결 대기 중)"
+                        self._video_message = "미연결"
                     elif cam_err:
                         self._video_state = "camera_error"
                         self._video_message = f"카메라 오류 ({cam_err})"
@@ -588,7 +643,7 @@ class RobotMonitor:
                 )
                 if self._viewer_count > 0 and self._video_state != "streaming":
                     self._video_state = "robot_offline"
-                    self._video_message = "로봇 오프라인 (서버 응답 없음)"
+                    self._video_message = "미연결"
         finally:
             with self._lock:
                 self._status_polling = False
@@ -687,17 +742,25 @@ class RobotMonitor:
     def load_history(self) -> dict[str, Any]:
         records: list[dict[str, Any]] = []
         seen_ids: set[str] = set()
+        override_map: dict[str, tuple[int, str, list[str]]] = {}
 
-        # 1. Load verified uploaded events (windows_client / robot_event)
+        # 1. Load verified uploaded events (windows_client / robot_event / edge_analysis) and overrides
         if self.events_db_path.is_file():
             try:
                 with closing(sqlite3.connect(f"file:{self.events_db_path}?mode=ro", uri=True)) as conn:
+                    for ov_id, ov_del, ov_memo, ov_tags in conn.execute(
+                        "SELECT event_id, deleted, memo, tags FROM robot_event_overrides"
+                    ).fetchall():
+                        if isinstance(ov_id, str):
+                            override_map[ov_id] = (int(ov_del or 0), str(ov_memo or ""), _parse_tags(ov_tags))
                     rows = conn.execute(
-                        "SELECT id, event_id, event_date, event_time, item, abnormal, match_score, source "
+                        "SELECT id, event_id, event_date, event_time, item, abnormal, match_score, source, memo, tags "
                         "FROM robot_inspection_events ORDER BY event_date DESC, event_time DESC, id DESC LIMIT 200"
                     ).fetchall()
-                for row_id, event_id, ev_date, ev_time, item, abnormal, score, source in rows:
+                for row_id, event_id, ev_date, ev_time, item, abnormal, score, source, memo, tags in rows:
                     if not isinstance(event_id, str) or not EVENT_ID_RE.fullmatch(event_id):
+                        continue
+                    if override_map.get(event_id, (0, "", []))[0] == 1:
                         continue
                     seen_ids.add(event_id)
                     score_val = round(float(score), 4)
@@ -718,6 +781,8 @@ class RobotMonitor:
                         "overview_url": f"/api/robot/captures/overview/{event_id}.jpg",
                         "source": src,
                         "source_label": SOURCE_LABELS[src],
+                        "memo": str(memo or ""),
+                        "tags": _parse_tags(tags),
                     })
             except Exception:
                 LOGGER.exception("Failed reading robot_inspection_events DB")
@@ -732,6 +797,9 @@ class RobotMonitor:
                     ).fetchall()
                 for row_id, event_id, ev_date, ev_time, item, abnormal, _photo_path, _overview_path, score in rows:
                     if not isinstance(event_id, str) or not EVENT_ID_RE.fullmatch(event_id) or event_id in seen_ids:
+                        continue
+                    ov_del, ov_memo, ov_tags = override_map.get(event_id, (0, "", []))
+                    if ov_del == 1:
                         continue
                     seen_ids.add(event_id)
                     score_val = round(float(score), 4)
@@ -751,6 +819,8 @@ class RobotMonitor:
                         "overview_url": f"/api/robot/captures/overview/{event_id}.jpg",
                         "source": "legacy_import",
                         "source_label": SOURCE_LABELS["legacy_import"],
+                        "memo": ov_memo,
+                        "tags": ov_tags,
                     })
             except Exception:
                 pass
@@ -766,6 +836,109 @@ class RobotMonitor:
             "by_item": dict(counts),
             "records": records,
         }
+
+    def _exists_in_legacy(self, event_id: str) -> bool:
+        if not self.legacy_db_path.is_file():
+            return False
+        try:
+            with closing(sqlite3.connect(f"file:{self.legacy_db_path}?mode=ro", uri=True)) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM inspection_history WHERE event_id = ? LIMIT 1",
+                    (event_id,),
+                ).fetchone()
+            return row is not None
+        except Exception:
+            return False
+
+    def update_event_memo(self, event_id: str, memo: str) -> dict[str, Any]:
+        event_id = str(event_id or "").strip().lower()
+        if not EVENT_ID_RE.fullmatch(event_id):
+            raise ValueError("유효하지 않은 event_id입니다.")
+        memo_text = str(memo or "").strip()[:500]
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with closing(sqlite3.connect(self.events_db_path, timeout=5)) as conn, conn:
+            cur = conn.execute(
+                "UPDATE robot_inspection_events SET memo = ? WHERE event_id = ?",
+                (memo_text, event_id),
+            )
+            if cur.rowcount == 0:
+                if not self._exists_in_legacy(event_id):
+                    raise LookupError("해당 탐사 기록을 찾을 수 없습니다.")
+                conn.execute(
+                    """INSERT INTO robot_event_overrides (event_id, deleted, memo, updated_at)
+                       VALUES (?, 0, ?, ?)
+                       ON CONFLICT(event_id) DO UPDATE SET
+                           memo = excluded.memo,
+                           updated_at = excluded.updated_at""",
+                    (event_id, memo_text, now_iso),
+                )
+        return {"ok": True, "event_id": event_id, "memo": memo_text}
+
+    def update_event_tags(self, event_id: str, tags: Any) -> dict[str, Any]:
+        event_id = str(event_id or "").strip().lower()
+        if not EVENT_ID_RE.fullmatch(event_id):
+            raise ValueError("유효하지 않은 event_id입니다.")
+        if not isinstance(tags, list):
+            raise ValueError("tags는 배열 형식이어야 합니다.")
+        allowed = set(VALID_SUPERVISOR_TAGS)
+        for item in tags:
+            if str(item or "").strip() not in allowed:
+                raise ValueError(f"허용되지 않은 태그입니다: {item}")
+        clean_tags = _parse_tags(tags)
+        tags_json = json.dumps(clean_tags, ensure_ascii=False)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        with closing(sqlite3.connect(self.events_db_path, timeout=5)) as conn, conn:
+            cur = conn.execute(
+                "UPDATE robot_inspection_events SET tags = ? WHERE event_id = ?",
+                (tags_json, event_id),
+            )
+            if cur.rowcount == 0:
+                if not self._exists_in_legacy(event_id):
+                    raise LookupError("해당 탐사 기록을 찾을 수 없습니다.")
+                conn.execute(
+                    """INSERT INTO robot_event_overrides (event_id, deleted, memo, tags, updated_at)
+                       VALUES (?, 0, '', ?, ?)
+                       ON CONFLICT(event_id) DO UPDATE SET
+                           tags = excluded.tags,
+                           updated_at = excluded.updated_at""",
+                    (event_id, tags_json, now_iso),
+                )
+        return {"ok": True, "event_id": event_id, "tags": clean_tags}
+
+    def delete_event(self, event_id: str) -> dict[str, Any]:
+        event_id = str(event_id or "").strip().lower()
+        if not EVENT_ID_RE.fullmatch(event_id):
+            raise ValueError("유효하지 않은 event_id입니다.")
+        now_iso = datetime.now(timezone.utc).isoformat()
+        files_to_remove: list[Path] = []
+        with closing(sqlite3.connect(self.events_db_path, timeout=5)) as conn, conn:
+            row = conn.execute(
+                "SELECT detail_file, overview_file FROM robot_inspection_events WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+            if row is not None:
+                for fname in row:
+                    if isinstance(fname, str) and fname and "/" not in fname and "\\" not in fname:
+                        files_to_remove.append(self.events_captures_dir / fname)
+                conn.execute("DELETE FROM robot_inspection_events WHERE event_id = ?", (event_id,))
+                conn.execute("DELETE FROM robot_event_overrides WHERE event_id = ?", (event_id,))
+            else:
+                if not self._exists_in_legacy(event_id):
+                    raise LookupError("해당 탐사 기록을 찾을 수 없습니다.")
+                conn.execute(
+                    """INSERT INTO robot_event_overrides (event_id, deleted, memo, updated_at)
+                       VALUES (?, 1, '', ?)
+                       ON CONFLICT(event_id) DO UPDATE SET
+                           deleted = 1,
+                           updated_at = excluded.updated_at""",
+                    (event_id, now_iso),
+                )
+        for path in files_to_remove:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        return {"ok": True, "event_id": event_id}
 
     def resolve_capture_bytes(self, kind: str, event_id: str) -> bytes | None:
         if kind not in {"detail", "overview"} or not EVENT_ID_RE.fullmatch(event_id):
@@ -1149,3 +1322,45 @@ def register_robot_routes(app, monitor: RobotMonitor) -> None:
         if data is None:
             abort(404)
         return Response(data, mimetype="image/jpeg", headers={"Cache-Control": "private, max-age=300"})
+
+    @app.post("/api/robot/events/<event_id>/memo")
+    def robot_update_event_memo(event_id: str):
+        if not same_origin_request():
+            abort(403)
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or "memo" not in payload:
+            return jsonify(error="memo 필드가 필요합니다."), 400
+        try:
+            res = monitor.update_event_memo(event_id, str(payload.get("memo") or ""))
+            return jsonify({**res, "status": monitor.snapshot()}), 200
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except LookupError as exc:
+            return jsonify(error=str(exc)), 404
+
+    @app.post("/api/robot/events/<event_id>/tags")
+    def robot_update_event_tags(event_id: str):
+        if not same_origin_request():
+            abort(403)
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict) or "tags" not in payload:
+            return jsonify(error="tags 필드가 필요합니다."), 400
+        try:
+            res = monitor.update_event_tags(event_id, payload.get("tags"))
+            return jsonify({**res, "status": monitor.snapshot()}), 200
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except LookupError as exc:
+            return jsonify(error=str(exc)), 404
+
+    @app.delete("/api/robot/events/<event_id>")
+    def robot_delete_event(event_id: str):
+        if not same_origin_request():
+            abort(403)
+        try:
+            res = monitor.delete_event(event_id)
+            return jsonify({**res, "status": monitor.snapshot()}), 200
+        except ValueError as exc:
+            return jsonify(error=str(exc)), 400
+        except LookupError as exc:
+            return jsonify(error=str(exc)), 404

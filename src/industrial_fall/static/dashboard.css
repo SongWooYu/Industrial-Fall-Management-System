@@ -54,7 +54,8 @@
 .robot-inline-check{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--ink);cursor:pointer;white-space:nowrap;user-select:none}
 .robot-analysis-toolbar button{padding:6px 11px;font-size:12px}
 .primary-btn{background:var(--accent);color:#06121e;border-color:var(--accent);font-weight:700}
-.robot-live-body,.robot-selected-body{padding:0 16px 12px;flex:1;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden}
+.robot-live-body{padding:0 16px 12px;flex:1;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden}
+.robot-selected-body{padding:0 16px 12px;flex:1;display:flex;flex-direction:column;gap:8px;min-height:0;overflow-y:auto}
 .robot-video-wrap{aspect-ratio:4/3;width:100%;max-height:420px;margin:auto;border-radius:8px;border:1px solid var(--line);background:#000;position:relative;overflow:hidden}
 .robot-vision-bar{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 10px;border-radius:6px;background:var(--surface);border:1px solid var(--line);font-size:12px;flex-shrink:0}
 #robot-vision-summary{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -76,16 +77,35 @@
 .robot-meta-grid strong[data-abnormal="이상"]{color:var(--alarm)}
 .robot-meta-grid strong[data-abnormal="정상"]{color:var(--okay)}
 
-.robot-photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:0;align-items:stretch}
+.robot-photo-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;flex:1;min-height:130px;align-items:stretch}
 .robot-figure{margin:0;border:1px solid var(--line);border-radius:8px;background:var(--surface);overflow:hidden;display:flex;flex-direction:column;min-height:0}
 .robot-figure figcaption{padding:7px 10px;font-size:11px;font-weight:700;border-bottom:1px solid var(--line);color:var(--muted);flex-shrink:0}
 .robot-figure img{width:100%;flex:1;min-height:0;aspect-ratio:4/3;object-fit:contain;background:#000;display:block;cursor:pointer}
 .robot-figure .empty{margin:auto;padding:18px 10px}
 #robot-selected-badge[data-abnormal="이상"]{color:var(--alarm);border:1px solid var(--alarm)}
+.danger-btn{border-color:color-mix(in srgb,var(--alarm) 55%,var(--line));color:var(--alarm);padding:5px 10px;font-size:12px}
+.danger-btn:hover:not(:disabled){background:color-mix(in srgb,var(--alarm) 14%,var(--panel))}
+.danger-btn:disabled{opacity:.45;cursor:not-allowed}
+.robot-memo-box{border:1px solid var(--line);border-radius:8px;background:var(--surface);padding:8px 10px;display:flex;flex-direction:column;gap:6px;flex-shrink:0}
+.robot-memo-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:11px;font-weight:700;color:var(--muted)}
+.robot-tag-picker{display:flex;flex-wrap:wrap;gap:5px}
+.robot-tag-btn{padding:3px 8px;font-size:11px;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--muted);cursor:pointer}
+.robot-tag-btn:hover:not(:disabled){border-color:var(--accent);color:var(--ink)}
+.robot-tag-btn:disabled{opacity:.45;cursor:not-allowed}
+.robot-tag-btn[aria-pressed="true"]{color:var(--ink);font-weight:700;border-color:var(--accent);background:color-mix(in srgb,var(--accent) 18%,var(--panel))}
+.robot-tag-btn[data-tag="조치 필요"][aria-pressed="true"]{color:var(--alarm);border-color:var(--alarm);background:color-mix(in srgb,var(--alarm) 16%,var(--panel))}
+.robot-tag-btn[data-tag="조치 중"][aria-pressed="true"]{color:var(--warning);border-color:var(--warning);background:color-mix(in srgb,var(--warning) 16%,var(--panel))}
+.robot-tag-btn[data-tag="조치 완료"][aria-pressed="true"],.robot-tag-btn[data-tag="이상 없음"][aria-pressed="true"]{color:var(--okay);border-color:var(--okay);background:color-mix(in srgb,var(--okay) 16%,var(--panel))}
+.robot-tag-filter{padding:4px 8px;font-size:12px}
+.robot-memo-controls{display:flex;gap:8px;align-items:stretch}
+.robot-memo-controls textarea{flex:1;min-width:0;resize:none;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--ink);padding:6px 8px;font:inherit;font-size:12px;line-height:1.35}
+.robot-memo-controls textarea:disabled{opacity:.5;cursor:not-allowed}
+.robot-memo-controls button{padding:6px 12px;font-size:12px;white-space:nowrap}
+.robot-memo-controls button:disabled{opacity:.45;cursor:not-allowed}
 
-.robot-history-head{display:grid;grid-template-columns:138px minmax(90px,1.1fr) 54px 86px;gap:8px;padding:8px 14px;background:var(--surface);border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:11px;font-weight:700;color:var(--muted);flex-shrink:0}
+.robot-history-head{display:grid;grid-template-columns:126px minmax(64px,.9fr) 44px 66px minmax(48px,.8fr) 42px;gap:6px;padding:8px 10px;background:var(--surface);border-top:1px solid var(--line);border-bottom:1px solid var(--line);font-size:11px;font-weight:700;color:var(--muted);flex-shrink:0}
 .robot-history-list{flex:1;overflow-y:auto;padding:6px 10px;display:flex;flex-direction:column;gap:4px;min-height:0}
-.robot-history-row{display:grid;grid-template-columns:138px minmax(90px,1.1fr) 54px 86px;gap:8px;align-items:center;padding:7px 10px;min-height:34px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font-size:12px;cursor:pointer;text-align:left;width:100%}
+.robot-history-row{display:grid;grid-template-columns:126px minmax(64px,.9fr) 44px 66px minmax(48px,.8fr) 42px;gap:6px;align-items:center;padding:6px 8px;min-height:34px;border:1px solid var(--line);border-radius:6px;background:var(--surface);color:var(--ink);font-size:12px;cursor:pointer;text-align:left;width:100%}
 .robot-history-row:hover{border-color:var(--accent)}
 .robot-history-row.selected{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,var(--panel));font-weight:600}
 .robot-history-row>span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums}
@@ -93,6 +113,16 @@
 .robot-row-badge[data-abnormal="이상"]{color:var(--alarm);border-color:var(--alarm)}
 .robot-row-badge[data-abnormal="정상"]{color:var(--okay);border-color:var(--okay)}
 .robot-row-source{font-size:11px;color:var(--muted)}
+.robot-row-memo{font-size:11px;color:var(--muted);display:flex;align-items:center;gap:4px;min-width:0}
+.robot-row-memo[data-has-memo="true"]{color:var(--ink)}
+.robot-row-tag{display:inline-block;font-size:10px;font-weight:700;padding:0 5px;border-radius:999px;border:1px solid var(--line);color:var(--ink);flex-shrink:0}
+.robot-row-tag[data-tag="조치 필요"]{color:var(--alarm);border-color:var(--alarm)}
+.robot-row-tag[data-tag="조치 중"]{color:var(--warning);border-color:var(--warning)}
+.robot-row-tag[data-tag="조치 완료"],.robot-row-tag[data-tag="이상 없음"]{color:var(--okay);border-color:var(--okay)}
+.robot-row-memo-text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.robot-row-memo[data-has-memo="true"]{color:var(--ink)}
+.robot-row-delete{padding:2px 6px;font-size:11px;border:1px solid color-mix(in srgb,var(--alarm) 45%,var(--line));border-radius:4px;background:transparent;color:var(--alarm);cursor:pointer;text-align:center}
+.robot-row-delete:hover{background:color-mix(in srgb,var(--alarm) 14%,var(--panel))}
 .robot-pagination{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;border-top:1px solid var(--line);background:var(--surface);flex-shrink:0}
 .robot-pagination button{padding:6px 12px;font-size:12px}
 .robot-pagination button:disabled{opacity:.45;cursor:not-allowed}

@@ -2,15 +2,15 @@
 <html lang="ko">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>산업안전 낙상관리시스템</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261112-compact-v5') }}">
-  <script defer src="{{ url_for('static', filename='stream-player.js', v='20261112-compact-v5') }}"></script>
-  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261112-compact-v5') }}"></script>
-  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261112-compact-v5') }}"></script>
+  <title>감리용 산업안전 통합 관제 시스템</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='dashboard.css', v='20261116-v8') }}">
+  <script defer src="{{ url_for('static', filename='stream-player.js', v='20261116-v8') }}"></script>
+  <script defer src="{{ url_for('static', filename='browser-alerts.js', v='20261116-v8') }}"></script>
+  <script defer src="{{ url_for('static', filename='dashboard.js', v='20261116-v8') }}"></script>
 </head>
 <body>
   <header>
-    <div><div class="eyebrow">INDUSTRIAL SAFETY · VISION &amp; ROBOTICS</div><h1>산업안전 낙상 · 탐사로봇 통합 관제시스템</h1></div>
+    <div><div class="eyebrow">SUPERVISOR CONSOLE · INDUSTRIAL SAFETY</div><h1>감리용 산업안전 통합 관제 시스템</h1></div>
     <div class="tools">
       <nav class="view-tabs" aria-label="관제 화면 전환">
         <button id="tab-btn-fall" type="button" class="tab-btn active" aria-selected="true">현장 낙상 관제</button>
@@ -77,8 +77,8 @@
         </div>
         <div class="robot-topbar-cell" id="robot-cell-pc">
           <span class="robot-cell-label">조종 클라이언트 · 영상</span>
-          <strong id="robot-pc-badge">확인 중</strong>
-          <small id="robot-video-sub">관제 대기</small>
+          <strong id="robot-pc-badge">미연결</strong>
+          <small id="robot-video-sub">영상 미연결</small>
         </div>
         <div class="robot-topbar-cell" id="robot-cell-drive">
           <span class="robot-cell-label">주행 방향 / 출력(PWM)</span>
@@ -110,7 +110,7 @@
               <span class="muted" id="robot-video-host-label">192.168.1.206:5000 · /monitor/video (640×480)</span>
             </div>
             <div class="tools">
-              <span class="badge-live" id="robot-live-pill">대기</span>
+              <span class="badge-live" id="robot-live-pill">미연결</span>
               <button id="robot-video-retry" type="button">영상 재연결</button>
             </div>
           </div>
@@ -124,7 +124,7 @@
               <option value="object">작업자 · 일반 물체 분석</option>
             </select>
             <label class="robot-inline-check" title="분석 모드에서 탐지 확정 시 자동으로 이력에 캡처 저장">
-              <input id="robot-auto-record" type="checkbox" checked>
+              <input id="robot-auto-record" type="checkbox">
               <span>탐지 자동 기록</span>
             </label>
             <button id="robot-capture-now" type="button" class="primary-btn" title="현재 실시간/분석 화면을 즉시 탐사 이력에 저장">현재 장면 저장</button>
@@ -133,8 +133,8 @@
             <div class="video-wrap robot-video-wrap">
               <img id="robot-live-stream" class="robot-stream" src="data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=" alt="안전탐색 로봇 실시간 원본 카메라 영상">
               <div id="robot-video-overlay" class="robot-video-overlay" data-state="idle">
-                <strong id="robot-video-overlay-title">실시간 영상 대기</strong>
-                <p id="robot-video-overlay-detail">로봇 관제 탭이 열리면 /monitor/video 스트림을 수신합니다.</p>
+                <strong id="robot-video-overlay-title">영상 미연결</strong>
+                <p id="robot-video-overlay-detail">로봇 관제 화면에서 연결을 시도합니다.</p>
               </div>
               <span class="transport-label" id="robot-stream-label">원본 MJPEG 릴레이 (/monitor/video)</span>
             </div>
@@ -142,7 +142,7 @@
               <span id="robot-vision-summary">원본 영상 모드 (분석 끔)</span>
             </div>
           </div>
-          <p class="storage-note">기본은 원본 영상이며, 분석 모드를 열면 실시간 박스를 표시하고 탐지 결과를 저장합니다. 탭을 닫으면 10초 후 연결을 해제합니다.</p>
+          <p class="storage-note">기본은 원본 영상이며, 분석 모드를 열면 영상에 실시간 분석만 표시합니다. 자동 저장이 필요할 때만 '탐지 자동 기록'을 켜세요.</p>
         </section>
 
         <section class="panel robot-col-selected">
@@ -151,7 +151,10 @@
               <h2>선택한 탐사 기록</h2>
               <span class="muted">발견 당시 전체 화면(Overview) 및 검출 확대(Detail)</span>
             </div>
-            <span class="count" id="robot-selected-badge">선택 대기</span>
+            <div class="tools">
+              <span class="count" id="robot-selected-badge">선택 대기</span>
+              <button id="robot-sel-delete" type="button" class="danger-btn" disabled>삭제</button>
+            </div>
           </div>
           <div class="robot-selected-body">
             <div class="robot-meta-grid">
@@ -173,6 +176,24 @@
                 <p id="robot-detail-empty" class="empty">우측 이력에서 항목을 선택해 주세요.</p>
               </figure>
             </div>
+            <div class="robot-memo-box">
+              <div class="robot-memo-head">
+                <label for="robot-sel-memo">감리 태그 · 현장 메모</label>
+                <span id="robot-memo-status" class="muted"></span>
+              </div>
+              <div id="robot-tag-picker" class="robot-tag-picker" role="group" aria-label="조치 상태 및 감리 태그">
+                <button type="button" class="robot-tag-btn" data-tag="조치 필요" aria-pressed="false" disabled>조치 필요</button>
+                <button type="button" class="robot-tag-btn" data-tag="조치 중" aria-pressed="false" disabled>조치 중</button>
+                <button type="button" class="robot-tag-btn" data-tag="조치 완료" aria-pressed="false" disabled>조치 완료</button>
+                <button type="button" class="robot-tag-btn" data-tag="재점검" aria-pressed="false" disabled>재점검</button>
+                <button type="button" class="robot-tag-btn" data-tag="현장 전달" aria-pressed="false" disabled>현장 전달</button>
+                <button type="button" class="robot-tag-btn" data-tag="이상 없음" aria-pressed="false" disabled>이상 없음</button>
+              </div>
+              <div class="robot-memo-controls">
+                <textarea id="robot-sel-memo" rows="2" maxlength="500" placeholder="특이사항이나 조치 내용을 입력하세요..." disabled></textarea>
+                <button id="robot-memo-save" type="button" disabled>메모 저장</button>
+              </div>
+            </div>
           </div>
           <p class="storage-note">이미지를 클릭하면 원본 크기로 확대하거나 파일로 저장할 수 있습니다.</p>
         </section>
@@ -183,13 +204,28 @@
               <h2>탐사 이력</h2>
               <span class="muted" id="robot-stats-text">총 0건 · 이상 0건 · 정상 0건</span>
             </div>
-            <span class="count" id="robot-record-count">0</span>
+            <div class="tools">
+              <label class="sr-only" for="robot-tag-filter">태그 필터</label>
+              <select id="robot-tag-filter" class="robot-tag-filter" title="감리 태그별 이력 필터">
+                <option value="all">전체 태그</option>
+                <option value="조치 필요">조치 필요</option>
+                <option value="조치 중">조치 중</option>
+                <option value="조치 완료">조치 완료</option>
+                <option value="재점검">재점검</option>
+                <option value="현장 전달">현장 전달</option>
+                <option value="이상 없음">이상 없음</option>
+                <option value="untagged">태그 미지정</option>
+              </select>
+              <span class="count" id="robot-record-count">0</span>
+            </div>
           </div>
           <div class="robot-history-head" aria-hidden="true">
             <span>날짜 / 시각</span>
             <span>탐사 항목</span>
             <span>판정</span>
             <span>출처</span>
+            <span>태그 · 메모</span>
+            <span>관리</span>
           </div>
           <div id="robot-records" class="robot-history-list" role="region" aria-label="탐사 이력 목록">
             <p class="empty">탐사 이력을 불러오는 중입니다.</p>
